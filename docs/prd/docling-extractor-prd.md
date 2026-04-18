@@ -1,9 +1,9 @@
 # Docling Extractor — Product Requirements Document (PRD)
 
-> **Versão:** 1.0
-> **Status:** Draft (para validação)
+> **Versão:** 1.1
+> **Status:** Approved (pós validação PO)
 > **Autor:** Morgan (PM) — sessão de planejamento
-> **Data:** 2026-04-11
+> **Data:** 2026-04-18
 > **Escopo:** v1 local-first MVP
 
 ---
@@ -29,6 +29,7 @@ O framework já define a biblioteca Docling como a ferramenta-padrão de convers
 | Date | Version | Description | Author |
 |---|---|---|---|
 | 2026-04-11 | 1.0 | Draft inicial do PRD | Morgan (PM) |
+| 2026-04-18 | 1.1 | Validação PO — fix M1 (Story 1.4/1.5 cross-reference `local_path`) e M2 (renumeração de ACs da Story 1.6); status Draft → Approved | Pax (PO) |
 
 ---
 
@@ -227,13 +228,13 @@ so that the UI can submit any of the 3 input types through one clean JSON contra
 
 **Acceptance Criteria:**
 
-1. `backend/main.py` expõe `POST /extract` aceitando `multipart/form-data` com campos opcionais mutuamente exclusivos: `url` (string) ou `file` (upload).
-2. O endpoint valida que exatamente um dos dois campos foi fornecido — retorna HTTP 400 com mensagem clara se ambos ou nenhum.
+1. `backend/main.py` expõe `POST /extract` aceitando `multipart/form-data` com **três campos opcionais mutuamente exclusivos**: `url` (string), `file` (upload) ou `local_path` (string — caminho absoluto para PDF no sistema de arquivos local, atendendo ao fallback FR9).
+2. O endpoint valida que exatamente um dos três campos foi fornecido — retorna HTTP 400 com mensagem clara se zero, dois ou três estiverem presentes. Para `local_path`, valida adicionalmente que o caminho existe, é legível e corresponde a um arquivo PDF (extensão `.pdf` ou MIME `application/pdf`); falhas retornam HTTP 400 com mensagem acionável.
 3. Uploads excedendo `MAX_UPLOAD_MB` retornam HTTP 413 com mensagem clara. A verificação acontece antes de a conversão iniciar.
 4. A rota integra, na ordem: `docling_service.extract` → `frontmatter.build` → `file_writer.save`, e retorna JSON `{"status": "ok", "output_path": "<absolute path>", "filename": "<basename>"}` com HTTP 200 em sucesso.
 5. Exceptions tipadas da camada de serviço são mapeadas para respostas HTTP claras: `SourceFetchError` → 502, `ConversionError` → 422, qualquer outra → 500. Todas incluem mensagem textual acionável.
 6. Timeout global por requisição respeitando `REQUEST_TIMEOUT_SECONDS` do config; excedê-lo retorna 504 com mensagem clara.
-7. Testes de integração em `tests/test_endpoints.py` cobrem, via `TestClient` do FastAPI, os 3 cenários de sucesso (URL HTML, URL PDF, upload PDF local) e os casos de erro (sem input, ambos inputs, upload oversized, URL inacessível).
+7. Testes de integração em `tests/test_endpoints.py` cobrem, via `TestClient` do FastAPI, os **4 cenários de sucesso** (URL HTML, URL PDF, upload PDF local, `local_path`) e os casos de erro (sem input, múltiplos inputs simultâneos, upload oversized, URL inacessível, `local_path` inexistente, `local_path` apontando para arquivo não-PDF).
 8. Para cada caso de sucesso no teste, o arquivo é efetivamente criado no output dir (fixture aponta para diretório temporário) e o conteúdo é validado: frontmatter correto + corpo não-vazio.
 
 ### Story 1.5: Browser Frontend with HTMX
@@ -251,7 +252,7 @@ so that the tool integrates seamlessly into my daily knowledge-processing ritual
 5. Durante a requisição, um indicador de progresso ("Processando...") aparece na área de resultado usando `hx-indicator`.
 6. Em sucesso, a área de resultado mostra: o nome do arquivo gerado, o caminho absoluto (copiável), e um atalho visual para o diretório de output (pode ser apenas o path em destaque — não precisa abrir o explorador).
 7. Em erro, a área de resultado mostra a mensagem HTTP recebida do backend em estilo visualmente distinto (cor diferente ou borda), sem popup/toast.
-8. O fallback de path local (item 2c) envia o conteúdo do campo como um form field alternativo que o backend trata como se fosse um caminho de arquivo local — Story 1.4 precisa aceitar essa terceira forma de input, documentado como extensão do endpoint `/extract` (adicionar campo `local_path`).
+8. O fallback de path local (item 2c) submete o conteúdo do campo como o form field `local_path` do endpoint `/extract` (já definido em Story 1.4 AC1), apresentando o resultado na mesma área de resultado/erro dos outros dois modos de entrada, sem divergência visual.
 9. Validação manual: o fluxo completo funciona em Chrome e Firefox em Windows, para os 3 tipos de entrada + o fallback de path.
 
 ### Story 1.6: QA Hardening & Documentation
@@ -263,18 +264,35 @@ so that I can rely on the tool daily without surprises and can return to it in m
 **Acceptance Criteria:**
 
 1. Testes de integração cobrem explicitamente os seguintes corner cases, todos com expectativas bem definidas: (a) URL web que retorna 404, (b) URL web que retorna HTML vazio ou quase-vazio (SPA não-renderizada), (c) PDF sem texto (página totalmente imagem, simulando o caso que não será suportado por falta de OCR), (d) arquivo enviado que não é PDF válido, (e) upload excedendo `MAX_UPLOAD_MB`, (f) timeout na conversão.
-3. Para o caso (c) PDF sem texto, o sistema retorna um erro claro orientando o usuário de que OCR não está habilitado na v1, em vez de produzir um arquivo vazio.
-4. `README.md` é atualizado com seções: Visão geral, Pré-requisitos, Instalação, Como rodar, Como usar (passo a passo com screenshots opcionais), Troubleshooting (primeira execução baixando modelos, PDFs sem texto, URLs dinâmicas não suportadas), Estrutura do projeto, Limitações conhecidas da v1, Roadmap de v2 (OCR, extração de imagens com descrição via LLM, deploy online).
-5. Linter `ruff check backend tests` passa sem erros; `ruff format --check` passa sem alterações pendentes.
-6. Toda a suíte de testes (`pytest`) roda em menos de 60 segundos em máquina de desenvolvimento típica.
-7. QA Gate rodado por `@qa` retorna verdict PASS ou CONCERNS (não FAIL).
-8. O autor executa manualmente 5 fluxos reais de ponta a ponta (3 tipos de fonte + fallback de path + 1 caso de erro) e confirma que cada um produz o resultado esperado.
+2. Para o caso (c) PDF sem texto, o sistema retorna um erro claro orientando o usuário de que OCR não está habilitado na v1, em vez de produzir um arquivo vazio.
+3. `README.md` é atualizado com seções: Visão geral, Pré-requisitos, Instalação, Como rodar, Como usar (passo a passo com screenshots opcionais), Troubleshooting (primeira execução baixando modelos, PDFs sem texto, URLs dinâmicas não suportadas), Estrutura do projeto, Limitações conhecidas da v1, Roadmap de v2 (OCR, extração de imagens com descrição via LLM, deploy online).
+4. Linter `ruff check backend tests` passa sem erros; `ruff format --check` passa sem alterações pendentes.
+5. Toda a suíte de testes (`pytest`) roda em menos de 60 segundos em máquina de desenvolvimento típica.
+6. QA Gate rodado por `@qa` retorna verdict PASS ou CONCERNS (não FAIL).
+7. O autor executa manualmente 5 fluxos reais de ponta a ponta (3 tipos de fonte + fallback de path + 1 caso de erro) e confirma que cada um produz o resultado esperado.
 
 ---
 
 ## 7. Checklist Results Report
 
-*Pendente. Será executado via `pm-checklist` quando o PRD for aprovado pelo autor.*
+**PO Master Checklist (executado em 2026-04-18 por Pax):**
+
+- **Classificação do projeto:** Greenfield com UI/UX
+- **Overall readiness:** 87% → **CONDITIONAL APPROVAL** → **APPROVED** (após correções M1 e M2 aplicadas em v1.1)
+- **Critical blockers:** 0
+- **Must-fix resolvidos nesta versão:**
+  - **M1** — Endpoint `/extract` agora contempla o 3º input `local_path` diretamente em Story 1.4 AC1/2/7; Story 1.5 AC8 deixa de ser retroativa.
+  - **M2** — ACs da Story 1.6 renumerados de 1–7 (gap de AC2 eliminado).
+- **Should-fix pendentes (tratáveis no draft por `@sm`):**
+  - S1: incluir `git init` + commit inicial em Story 1.1
+  - S2: pinar versões das libs no pyproject.toml (decisão do @dev)
+  - S3: política de User-Agent + timeout em requisições HTTP externas (Story 1.2)
+  - S4: mencionar `/docs` automático do FastAPI (Story 1.4 ou README em Story 1.6)
+- **Seções puladas legitimamente:** 1.2, 2.1 (DB), 3.1, 3.3, 4.1 (design system formal), 7 (Brownfield Risk)
+
+*Relatório completo disponível no histórico da conversa de validação.*
+
+**PM Checklist:** *pendente — será executado por `@pm *checklist` se solicitado antes da fase de implementação.*
 
 ---
 
