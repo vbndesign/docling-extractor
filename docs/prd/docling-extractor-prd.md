@@ -1,7 +1,7 @@
 # Docling Extractor — Product Requirements Document (PRD)
 
-> **Versão:** 1.1
-> **Status:** Approved (pós validação PO)
+> **Versão:** 1.3
+> **Status:** Approved (pós design system + arquitetura consolidada)
 > **Autor:** Morgan (PM) — sessão de planejamento
 > **Data:** 2026-04-18
 > **Escopo:** v1 local-first MVP
@@ -30,6 +30,8 @@ O framework já define a biblioteca Docling como a ferramenta-padrão de convers
 |---|---|---|---|
 | 2026-04-11 | 1.0 | Draft inicial do PRD | Morgan (PM) |
 | 2026-04-18 | 1.1 | Validação PO — fix M1 (Story 1.4/1.5 cross-reference `local_path`) e M2 (renumeração de ACs da Story 1.6); status Draft → Approved | Pax (PO) |
+| 2026-04-18 | 1.2 | Revisão arquitetural (Aria) — incorpora should-fixes S1–S4 como ACs delta nas Stories 1.1, 1.2, 1.6. Sem mudança funcional de escopo. | Morgan (PM) |
+| 2026-04-18 | 1.3 | Incorpora decisões do design system (Uma, frontend-spec v1.1) + arquitetura consolidada (Aria, arch v1.2): Story 1.4 ganha AC9 (content negotiation HTMX + JSON no endpoint `/extract`). Sem mudança nas demais stories; contratos de erro e rendering passam a ser normativos via arch §7.3 e §10.2. | Morgan (PM) |
 
 ---
 
@@ -166,6 +168,8 @@ A v1 é suficientemente pequena para ser entregue em um único epic com stories 
 
 ## 6. Epic 1: Docling Extractor v1 — Local MVP
 
+> **📌 Epic shard:** Esta seção foi sharded via `*shard-prd` em 2026-04-18 para `docs/epics/2026-04-18_epic-1_docling-extractor.md`. O arquivo do epic é o **control document** (status, progresso, DoD, handoff chain). **Os ACs abaixo permanecem aqui como single source of truth** — o epic referencia por link, nunca duplica.
+
 **Goal:** Entregar em 6 stories sequenciais um MVP totalmente funcional da ferramenta de extração, do scaffolding inicial até a UI browser com tratamento de erros e testes de integração. Ao final do Epic 1, o usuário deve conseguir abrir `http://localhost:8000`, submeter qualquer uma das três modalidades de entrada suportadas, e receber um arquivo `.md` no diretório de output, pronto para ser movido manualmente para o vault Obsidian e completado como nota `1.1 Documento`.
 
 ### Story 1.1: Project Scaffolding & Configuration
@@ -177,13 +181,14 @@ so that I have a reliable foundation to iterate on without fighting plumbing.
 **Acceptance Criteria:**
 
 1. Repositório inicializado com a estrutura de pastas definida em Technical Assumptions (`backend/`, `frontend/`, `tests/`, `output/`).
-2. `pyproject.toml` declara Python 3.11+ e as dependências diretas: `fastapi`, `uvicorn[standard]`, `docling`, `httpx`, `jinja2`, `python-multipart`, `pyyaml`, `python-slugify`, mais dev-deps `pytest`, `ruff`.
+2. `pyproject.toml` declara Python 3.11+ e as dependências diretas **com limites superiores de versão** (S2): `fastapi>=0.110,<0.120`, `uvicorn[standard]>=0.27,<0.31`, `docling>=2.0,<3.0`, `httpx>=0.27,<0.28`, `jinja2>=3.1,<4.0`, `python-multipart>=0.0.9,<0.1`, `pyyaml>=6.0,<7.0`, `python-slugify>=8.0,<9.0`, mais dev-deps `pytest>=8.0,<9.0`, `pytest-asyncio`, `ruff>=0.4,<0.5`. Os ranges permitem patches sem drift de major/minor.
 3. `backend/config.py` define constantes/env vars para `OUTPUT_DIR` (default `./output`), `MAX_UPLOAD_MB` (default 50), `REQUEST_TIMEOUT_SECONDS` (default 60).
 4. `backend/main.py` expõe app FastAPI com endpoint `GET /health` retornando `{"status": "ok"}` e status 200.
 5. `uvicorn backend.main:app` sobe sem erros e o `/health` responde corretamente em browser/curl.
 6. `.gitignore` exclui `output/`, `__pycache__/`, `.venv/`, `.env`.
 7. `.env.example` documenta as variáveis de configuração disponíveis.
 8. `README.md` inicial cobre: pré-requisitos (Python 3.11+), instalação, como rodar o servidor, como checar o `/health`.
+9. Repositório inicializado com `git init` + commit inicial incluindo `.gitignore`, `.env.example` e toda a estrutura de pastas base (S1). Mensagem do commit segue conventional commits (ex: `chore: initial project scaffolding`).
 
 ### Story 1.2: Core Docling Extraction Service
 
@@ -201,6 +206,7 @@ so that the upper layers of the app (endpoints, writer) have a single clean inte
 6. Testes unitários em `tests/test_docling_service.py` usam fixtures (`tests/fixtures/sample.html` e `tests/fixtures/sample.pdf`) pequenas e commitadas no repo, exercitando os 3 caminhos.
 7. Testes cobrem o caso de sucesso para cada tipo e pelo menos um caso de falha explícita (ex: arquivo corrompido retorna exception bem definida).
 8. A função lança exceptions tipadas (ex: `SourceFetchError`, `ConversionError`) em vez de deixar vazar exceptions genéricas do Docling — isso prepara o tratamento de erro nas camadas superiores.
+9. Cliente HTTP externo (`httpx`) usado para fetch de URLs remotas está configurado com (S3): (a) header `User-Agent: docling-extractor/1.0` identificável, (b) timeout total de 30 segundos com `connect_timeout` de 10 segundos, (c) seguir redirects HTTP com limite de 5 hops. Essas configurações são aplicadas via `httpx.AsyncClient` instanciado no nível da aplicação.
 
 ### Story 1.3: Frontmatter Builder & File Writer
 
@@ -236,6 +242,7 @@ so that the UI can submit any of the 3 input types through one clean JSON contra
 6. Timeout global por requisição respeitando `REQUEST_TIMEOUT_SECONDS` do config; excedê-lo retorna 504 com mensagem clara.
 7. Testes de integração em `tests/test_endpoints.py` cobrem, via `TestClient` do FastAPI, os **4 cenários de sucesso** (URL HTML, URL PDF, upload PDF local, `local_path`) e os casos de erro (sem input, múltiplos inputs simultâneos, upload oversized, URL inacessível, `local_path` inexistente, `local_path` apontando para arquivo não-PDF).
 8. Para cada caso de sucesso no teste, o arquivo é efetivamente criado no output dir (fixture aponta para diretório temporário) e o conteúdo é validado: frontmatter correto + corpo não-vazio.
+9. O endpoint `POST /extract` aplica content negotiation via header `Accept`: se o cliente preferir `text/html` (HTMX default) e não preferir `application/json`, retorna partial Jinja2 (`frontend/templates/partials/result_success.html` em sucesso; `frontend/templates/partials/result_error.html` em erro, com status HTTP apropriado). Caso contrário, retorna o JSON definido em AC4/AC5. O handler global de exceptions respeita a mesma regra (referência normativa: arch doc §7.3 + §10.2). Testes cobrem: (a) `Accept: text/html` retorna HTML em sucesso e em erro; (b) ausência de `Accept` retorna JSON (preserva contrato AC4); (c) `Accept: application/json` retorna JSON.
 
 ### Story 1.5: Browser Frontend with HTMX
 
@@ -265,7 +272,7 @@ so that I can rely on the tool daily without surprises and can return to it in m
 
 1. Testes de integração cobrem explicitamente os seguintes corner cases, todos com expectativas bem definidas: (a) URL web que retorna 404, (b) URL web que retorna HTML vazio ou quase-vazio (SPA não-renderizada), (c) PDF sem texto (página totalmente imagem, simulando o caso que não será suportado por falta de OCR), (d) arquivo enviado que não é PDF válido, (e) upload excedendo `MAX_UPLOAD_MB`, (f) timeout na conversão.
 2. Para o caso (c) PDF sem texto, o sistema retorna um erro claro orientando o usuário de que OCR não está habilitado na v1, em vez de produzir um arquivo vazio.
-3. `README.md` é atualizado com seções: Visão geral, Pré-requisitos, Instalação, Como rodar, Como usar (passo a passo com screenshots opcionais), Troubleshooting (primeira execução baixando modelos, PDFs sem texto, URLs dinâmicas não suportadas), Estrutura do projeto, Limitações conhecidas da v1, Roadmap de v2 (OCR, extração de imagens com descrição via LLM, deploy online).
+3. `README.md` é atualizado com seções: Visão geral, Pré-requisitos, Instalação, Como rodar, Como usar (passo a passo com screenshots opcionais; inclui menção ao Swagger UI automático em `http://127.0.0.1:8000/docs` para inspeção do endpoint `/extract` — S4), Troubleshooting (primeira execução baixando modelos, PDFs sem texto, URLs dinâmicas não suportadas), Estrutura do projeto, Limitações conhecidas da v1, Roadmap de v2 (OCR, extração de imagens com descrição via LLM, deploy online).
 4. Linter `ruff check backend tests` passa sem erros; `ruff format --check` passa sem alterações pendentes.
 5. Toda a suíte de testes (`pytest`) roda em menos de 60 segundos em máquina de desenvolvimento típica.
 6. QA Gate rodado por `@qa` retorna verdict PASS ou CONCERNS (não FAIL).
@@ -280,15 +287,19 @@ so that I can rely on the tool daily without surprises and can return to it in m
 - **Classificação do projeto:** Greenfield com UI/UX
 - **Overall readiness:** 87% → **CONDITIONAL APPROVAL** → **APPROVED** (após correções M1 e M2 aplicadas em v1.1)
 - **Critical blockers:** 0
-- **Must-fix resolvidos nesta versão:**
+- **Must-fix resolvidos em v1.1:**
   - **M1** — Endpoint `/extract` agora contempla o 3º input `local_path` diretamente em Story 1.4 AC1/2/7; Story 1.5 AC8 deixa de ser retroativa.
   - **M2** — ACs da Story 1.6 renumerados de 1–7 (gap de AC2 eliminado).
-- **Should-fix pendentes (tratáveis no draft por `@sm`):**
-  - S1: incluir `git init` + commit inicial em Story 1.1
-  - S2: pinar versões das libs no pyproject.toml (decisão do @dev)
-  - S3: política de User-Agent + timeout em requisições HTTP externas (Story 1.2)
-  - S4: mencionar `/docs` automático do FastAPI (Story 1.4 ou README em Story 1.6)
-- **Seções puladas legitimamente:** 1.2, 2.1 (DB), 3.1, 3.3, 4.1 (design system formal), 7 (Brownfield Risk)
+- **Should-fix resolvidos em v1.2 (via revisão arquitetural de Aria):**
+  - ✅ **S1** — Story 1.1 ganhou AC9: `git init` + commit inicial com `.gitignore`, `.env.example` e estrutura base.
+  - ✅ **S2** — Story 1.1 AC2 atualizado com version ranges (`>=X,<Y`) para todas as dependências — trava majors/minors, libera patches.
+  - ✅ **S3** — Story 1.2 ganhou AC9: `httpx.AsyncClient` com User-Agent identificável, timeout 30s (connect 10s), redirect limit 5.
+  - ✅ **S4** — Story 1.6 AC3 atualizado: seção "Como usar" do README menciona Swagger UI em `/docs`.
+- **Resolvido em v1.3 (design system + arquitetura consolidada):**
+  - ✅ **Story 1.4 AC9** — Content negotiation (HTMX HTML partial + JSON default) formalizado no endpoint `/extract`. Referência normativa: `docs/architecture/2026-04-18_architecture_docling-extractor.md` §7.3.
+  - ✅ **Frontend spec publicado** — `docs/architecture/2026-04-18_frontend-spec_docling-extractor.md` v1.1: 13 primitivos, design tokens, HTML skeleton, contratos HTMX. Passa a ser o insumo canônico de Dev Notes da Story 1.5.
+  - ✅ **Error envelope formalizado** — `{status, code, message, hint}` sempre presente; `hint` obrigatório, resolvido via `ERROR_CATALOG` em `backend/errors.py`. Referência: arch §10.2.
+- **Seções puladas legitimamente:** 1.2, 2.1 (DB), 3.1, 3.3, 7 (Brownfield Risk). Nota: a §3 original pulou o design system formal, mas a v1.3 passa a referenciar o frontend-spec como norma não-formal de design para Story 1.5.
 
 *Relatório completo disponível no histórico da conversa de validação.*
 
@@ -304,8 +315,19 @@ so that I can rely on the tool daily without surprises and can return to it in m
 
 ### SM Prompt
 
-@sm — assim que o PRD e o Epic 1 forem aprovados pelo autor, inicie `*draft` da **Story 1.1: Project Scaffolding & Configuration**. As stories são sequenciais e nenhuma delas deve ser iniciada antes da anterior estar em status `Done`. Para cada story, preserve integralmente os acceptance criteria deste PRD — eles são a fonte autoritativa do "definition of done".
+@sm — PRD v1.3 aprovado e consolidado com as seguintes referências normativas (usar em Dev Notes ao fazer `*draft` de cada story):
+
+| Story | Referências obrigatórias em Dev Notes |
+|-------|----------------------------------------|
+| 1.1 | PRD §4 Technical Assumptions; arch doc §9 Source Tree |
+| 1.2 | arch doc §5.1 (dataclasses), §6.3 (interface contracts), §10.1 (exception hierarchy) |
+| 1.3 | arch doc §5.1 (SourceDescriptor, ExtractedMetadata), §6.3 (contratos `build`/`save`) |
+| 1.4 | arch doc §7.2 (JSON contract), **§7.3 (content negotiation — AC9)**, §10.2 (ERROR_CATALOG) |
+| 1.5 | **`docs/architecture/2026-04-18_frontend-spec_docling-extractor.md` v1.1** (insumo canônico: tokens, primitivos, HTML skeleton, partials Jinja); arch §7.3 (Accept header) |
+| 1.6 | arch §10.4 (corner case table); PRD §6 Story 1.6 ACs |
+
+Inicie `*draft` da **Story 1.1: Project Scaffolding & Configuration**. Stories são sequenciais — nenhuma deve ser iniciada antes da anterior estar em status `Done`. Preserve integralmente os acceptance criteria deste PRD; eles são a fonte autoritativa do "definition of done". Quando chegar à Story 1.5, o frontend-spec substitui "improvisar UX" — copie/referencie os 13 primitivos (§5 do spec) como checklist dentro do arquivo da story.
 
 ---
 
-*PRD gerado em sessão de planejamento pelo agente PM (Morgan) — versão compacta não-interativa (Caminho B).*
+*PRD v1.3 — sessão de planejamento original pelo PM (Morgan); consolidações de design (Uma) + arquitetura (Aria) aplicadas em 2026-04-18 via handoffs documentados em `.aiox/handoffs/`.*
