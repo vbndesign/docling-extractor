@@ -1,5 +1,17 @@
-<div id="result" class="result-error">
-  <strong>{{ code }}</strong>
-  <p>{{ message }}</p>
-  <p>{{ hint }}</p>
+<div class="result-card result-card--error">
+  <div class="result-card__accent-stripe" aria-hidden="true"></div>
+  <div class="result-card__header">
+    <span class="status-pill status-pill--error">
+      <span class="status-dot status-dot--error"></span>
+      PIPELINE_ERROR
+    </span>
+    <a class="text-link-subtle text-link-subtle--muted" href="/"
+      >Dismiss and retry extraction</a
+    >
+  </div>
+  <div class="error-message">
+    <strong>{{ code }}</strong>
+    <p>{{ message }}</p>
+    <p class="error-message__hint">{{ hint }}</p>
+  </div>
 </div>

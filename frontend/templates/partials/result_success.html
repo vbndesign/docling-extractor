@@ -1,4 +1,23 @@
-<div id="result" class="result-success">
-  <p>OK: {{ result.filename }}</p>
-  <code>{{ result.output_path }}</code>
+<div class="result-card result-card--success">
+  <div class="result-card__accent-stripe" aria-hidden="true"></div>
+  <div class="result-card__header">
+    <span class="status-pill status-pill--success">
+      <span class="status-dot status-dot--success"></span>
+      READY_FOR_IMPORT
+    </span>
+    <div class="result-card__actions">
+      <button
+        type="button"
+        class="text-link-subtle"
+        data-copy="{{ result.output_path }}"
+      >
+        Copy Path
+      </button>
+      <a class="text-link-subtle text-link-subtle--muted" href="/">New Ingest</a>
+    </div>
+  </div>
+  <div class="path-block">{{ result.output_path }}</div>
+  <p class="result-card__helper">
+    ✓ High fidelity extraction complete — {{ result.filename }}
+  </p>
 </div>

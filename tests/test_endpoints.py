@@ -53,6 +53,27 @@ def test_health_endpoint_returns_ok(test_client):
 
 
 # --------------------------------------------------------------------------- #
+# GET / (Story 1.5 AC1 — index.html renders with output_dir in context)
+# --------------------------------------------------------------------------- #
+
+
+def test_index_renders_html_shell(test_client, test_settings):
+    response = test_client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    body = response.text
+    # HTMX is vendored (arch §7.3 — not CDN)
+    assert "/static/htmx.min.js" in body
+    assert "/static/style.css" in body
+    # The three input modes are all rendered in a single page (AC2)
+    assert 'name="url"' in body
+    assert 'name="file"' in body
+    assert 'name="local_path"' in body
+    # Output dir from settings is exposed in the header (§5.1)
+    assert str(test_settings.output_dir) in body
+
+
+# --------------------------------------------------------------------------- #
 # 4 SUCCESS CASES (AC7 + AC8)
 # --------------------------------------------------------------------------- #
 
@@ -246,7 +267,7 @@ def test_extract_returns_html_when_accept_text_html_on_success(
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "result-success" in response.text
+    assert "result-card--success" in response.text
     assert ".md" in response.text  # filename rendered in partial
 
 
@@ -254,7 +275,7 @@ def test_extract_returns_html_when_accept_text_html_on_error(test_client):
     response = test_client.post("/extract", headers={"Accept": "text/html"})
     assert response.status_code == 400
     assert response.headers["content-type"].startswith("text/html")
-    assert "result-error" in response.text
+    assert "result-card--error" in response.text
     assert "INVALID_INPUT" in response.text
 
 

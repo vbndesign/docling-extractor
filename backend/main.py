@@ -80,6 +80,19 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def index(
+    request: Request,
+    settings: Settings = Depends(get_settings),  # noqa: B008 — FastAPI DI idiom
+) -> Response:
+    templates: Jinja2Templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"output_dir": str(settings.output_dir)},
+    )
+
+
 def _validate_local_path(raw: str) -> Path:
     """Enforce arch §2.2 R4 for the `local_path` fallback."""
 
