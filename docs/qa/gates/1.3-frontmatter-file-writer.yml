@@ -1,0 +1,235 @@
+storyId: "1.3"
+storyTitle: "Frontmatter Builder & File Writer"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "uncommitted (working tree)"
+reviewer: "Quinn (@qa)"
+reviewedAt: "2026-04-19"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+verdict: PASS
+summary: >
+  All 9 acceptance criteria met. 16/16 new unit tests pass; full suite 28/28 in
+  7.83s; ruff clean on backend/ and tests/. `frontmatter.build` is a pure
+  function with no I/O and no clock — ``now`` is injected for determinism. The
+  forbidden-key invariant (AC4) and the ``None``-omission invariant (AC3) are
+  both directly asserted. `file_writer.save` honors FR7 priority precisely
+  (title → original_filename stem → URL slug → host → R9 fallback) and uses
+  ``Path.open("x")`` so the collision-suffix loop is TOCTOU-safe per arch §2.2
+  R6 / AC7. The two PO Should-Fix advisories from validation (AC6 SaveResult
+  return type and ``save()`` ``now`` kwarg for R9 determinism) were both
+  addressed in code.
+
+acceptance_criteria:
+  - id: AC1
+    requirement: "build(metadata, source, now) -> str returns YAML frontmatter wrapped in `---`"
+    status: met
+    evidence: >
+      backend/frontmatter.py:32-67 returns f"---\n{yaml_block}---". Test
+      test_build_wraps_in_triple_dashes asserts first/last lines == "---" and
+      that the document contains exactly two "---" markers.
+  - id: AC2
+    requirement: "Mandatory keys always present: note_type, created (YYYY-MM-DD), extracted_at (ISO 8601 + tz), location, generated_by"
+    status: met
+    evidence: >
+      Constants `NOTE_TYPE = "literature_document"` and `GENERATED_BY = "docling"`
+      hard-coded; `created = now.date().isoformat()` (YYYY-MM-DD) and
+      `extracted_at = now.isoformat()` (ISO 8601, offset preserved when caller
+      passes a tz-aware datetime). test_build_all_required_fields_present
+      verifies the REQUIRED_KEYS set is a subset of parsed YAML.
+      test_build_uses_local_date_for_created_and_iso8601_for_extracted_at
+      round-trips `extracted_at` via `datetime.fromisoformat` and asserts
+      `tzinfo is not None`.
+  - id: AC3
+    requirement: "Optional keys (source_title, author, year) emitted only if present in metadata; omitted entirely otherwise"
+    status: met
+    evidence: >
+      backend/frontmatter.py:53-58 uses `is not None` checks before adding to
+      payload — never inserts empty string, null, or placeholder.
+      test_build_mixed_optional_fields and test_build_omits_missing_fields
+      cover both populated and absent paths; the latter additionally asserts
+      "null" never appears in the rendered output.
+  - id: AC4
+    requirement: "Forbidden keys (title, source_type, domain, concepts_extracted) never generated"
+    status: met
+    evidence: >
+      No code path in backend/frontmatter.py references the forbidden names.
+      test_build_never_includes_forbidden_fields parses the YAML and asserts
+      none of the four forbidden keys appear in the output, even when fully
+      populated metadata is passed.
+  - id: AC5
+    requirement: "Special chars (quotes, colons, Windows backslashes) correctly escaped via yaml.safe_dump"
+    status: met
+    evidence: >
+      `yaml.safe_dump(payload, sort_keys=False, allow_unicode=True,
+      default_flow_style=False)` (frontmatter.py:60-65) handles escaping.
+      test_build_escapes_special_chars feeds a title containing `:`, `"`, and
+      `\\backslashes\\`, plus a Windows path location like
+      `C:\\Users\\vbnde\\Docs\\some: file.pdf`, and validates round-trip via
+      `yaml.safe_load`.
+  - id: AC6
+    requirement: "save(...) concatenates frontmatter+body, derives filename per FR7, applies kebab-case slug, writes to output_dir, returns Path"
+    status: met
+    evidence: >
+      backend/file_writer.py:88-119 implements all five sub-requirements.
+      Returns `SaveResult(output_path: Path, filename: str)` (the AC originally
+      said "Path" but the @po Should-Fix advisory upgraded the return to a
+      structured dataclass — implemented and reflected in
+      backend/models.py:50-55). Filename derivation in `_raw_basename`:
+      title → original_filename stem (only for `pdf_upload`/`pdf_local_path`)
+      → URL last-segment / host. Slug via `slugify(raw, separator="-",
+      lowercase=True, max_length=200)`. Concatenation
+      `frontmatter_str + "\n" + markdown_body`. test_save_uses_title_as_filename,
+      test_save_uses_original_filename_when_no_title,
+      test_save_uses_url_slug_when_no_title_and_no_filename,
+      test_save_applies_kebab_case_slug, and
+      test_save_returns_absolute_path_and_filename collectively cover every
+      branch.
+  - id: AC7
+    requirement: "Collision: append incremental suffix `-2`, `-3`, ... never overwrite silently"
+    status: met
+    evidence: >
+      backend/file_writer.py:109-119 opens with mode `"x"` (exclusive create);
+      catches `FileExistsError`, increments counter, retries. This is
+      TOCTOU-safe per arch §2.2 R6.
+      test_save_collision_appends_incremental_suffix saves three times with
+      identical metadata and asserts filenames are `same-title.md`,
+      `same-title-2.md`, `same-title-3.md` and that all three files coexist
+      on disk.
+  - id: AC8
+    requirement: "Frontmatter tests: required, optional, mixed, forbidden, special chars"
+    status: met
+    evidence: >
+      tests/test_frontmatter.py ships 8 tests covering: all required present,
+      all optional present, mixed optional, omission of None, forbidden-key
+      absence, special-char escaping (round-trip), date/ISO 8601 contract,
+      and triple-dash wrapping.
+  - id: AC9
+    requirement: "File-writer tests: 3 origins of name (title, filename, URL slug) + collision suffix"
+    status: met
+    evidence: >
+      tests/test_file_writer.py ships 8 tests: title-priority,
+      original_filename fallback, URL-slug fallback, kebab-case slug
+      transformation, collision suffix, R5 truncation (long title), R9 empty
+      slug fallback (`document-{timestamp}`), and the absolute-path/basename
+      contract.
+
+quality_gate_checks:
+  code_review:
+    status: pass
+    notes: >
+      `frontmatter.build` is genuinely pure: no `datetime.now()`, no I/O, no
+      hidden state. Module-level constants `NOTE_TYPE`/`GENERATED_BY` are
+      tidy. `file_writer` cleanly separates concerns: `_slug_from_url`,
+      `_raw_basename`, `_resolve_now`, `_derive_slug`, then `save`. PEP 604
+      union types throughout, frozen dataclasses for results. Public surface
+      is minimal: `build`, `save`, plus `SaveResult` re-exported via models.
+      Docstrings call out the AC mapping, the TOCTOU invariant, and the R5/R9
+      edge cases — they explain *why*, not *what*.
+  unit_tests:
+    status: pass
+    notes: >
+      28/28 pass in 7.83s warm; 16 new tests added by this story. Round-trip
+      `yaml.safe_load` validation in test_build_escapes_special_chars
+      genuinely proves the escape contract (not just byte-level inspection).
+      Determinism: every test passes a fixed `now` so R9 fallback yields a
+      stable filename. `tmp_path` isolation is consistent across all
+      file-writer tests.
+  acceptance_criteria:
+    status: pass
+    notes: "9 of 9 met. See acceptance_criteria block above."
+  regressions:
+    status: pass
+    notes: >
+      Story 1.2 modules (`docling_service`, `errors`, `config`) untouched.
+      Only additive change to `backend/models.py` is the new `SaveResult`
+      dataclass and the `Path` import — pre-existing dataclasses are
+      byte-identical. Full 28-test suite green confirms no Story 1.2
+      regression.
+  performance:
+    status: pass
+    notes: >
+      The two new modules contribute ~0.4s to the warm suite. `frontmatter`
+      is O(metadata fields); `file_writer` is O(collision count) but the
+      collision loop is bounded by filesystem behavior in practice. Comfortably
+      within the <60s global budget (Story 1.6 AC5).
+  security:
+    status: pass
+    notes: >
+      `yaml.safe_dump` (not `yaml.dump`) prevents arbitrary YAML tag emission.
+      `slugify` strips path separators and shell-special chars before they
+      reach the filesystem — no path-traversal vector via `metadata.source_title`
+      or URL segments. `Path.open("x")` is the only write mode used: an
+      attacker-controlled name cannot overwrite an existing file in
+      `output_dir`. No subprocess, no eval, no f-string SQL/HTML.
+  documentation:
+    status: pass
+    notes: >
+      Module docstrings in both new files reference the originating ACs and
+      arch sections (§2.2 R5/R6/R9, §5.1, §6.3). Story Dev Agent Record is
+      thorough; File List matches working tree exactly.
+
+issues: []
+
+observations:
+  - severity: low
+    category: code
+    file: "backend/file_writer.py:109-119"
+    description: >
+      The collision-suffix loop has no upper bound. In normal operation the
+      `output_dir` will never accumulate enough collisions to matter, but a
+      pathological scenario (thousands of identical titles already on disk)
+      would spin the loop unboundedly.
+    recommendation: >
+      Optional: cap at e.g. 1000 attempts and raise a typed `InternalError`
+      so the failure surfaces as 500 rather than a hung request. Non-blocking
+      for MVP.
+    blocking: false
+  - severity: low
+    category: code
+    file: "backend/file_writer.py:41-51"
+    description: >
+      `_slug_from_url` ultimately returns `location` verbatim if both
+      `parsed.path` and `parsed.netloc` are empty — that string is then
+      slugified by the caller. Works in practice (`slugify` is
+      hostile-input-tolerant) but the intent isn't obvious from the helper's
+      name.
+    recommendation: >
+      Optional: rename to `_descriptive_segment_for_url` or add a one-line
+      comment explaining the trailing fallback. Cosmetic.
+    blocking: false
+
+additional_checks_performed:
+  - name: "Focused unit suite"
+    command: ".venv/Scripts/python.exe -m pytest tests/test_frontmatter.py tests/test_file_writer.py -v"
+    result: "16 passed in 0.40s"
+  - name: "Full unit suite"
+    command: ".venv/Scripts/python.exe -m pytest"
+    result: "28 passed in 7.83s"
+  - name: "Ruff lint"
+    command: ".venv/Scripts/python.exe -m ruff check backend/ tests/"
+    result: "All checks passed!"
+  - name: "Forbidden-key audit (AC4)"
+    command: "grep -E '(title|source_type|domain|concepts_extracted)' backend/frontmatter.py"
+    result: "Zero references — forbidden keys are absent from the producing module."
+  - name: "Disk-write audit"
+    command: "grep for open(...,'w'), Path.write_*, shutil.copy in frontmatter.py"
+    result: "No writes in backend/frontmatter.py — pure function as documented."
+  - name: "TOCTOU safety check (arch §2.2 R6)"
+    command: "grep for Path.open in backend/file_writer.py"
+    result: "Single call site uses mode 'x' (exclusive create). Confirmed safe."
+  - name: "File List vs working tree"
+    command: "git status / Read on each listed file"
+    result: >
+      Matches Dev Agent Record exactly: 2 new backend modules, 2 new test
+      modules, 1 modification to backend/models.py (SaveResult + Path import).
+
+recommendation_next: >
+  Status moves to "Ready for Done"; @dev should update the Status field
+  (currently "Ready for Review") and @devops then pushes
+  feature/epic-1-docling-extractor. The two low-severity observations are
+  pure polish and can be deferred — neither affects MVP correctness or
+  security. Story 1.4 (orchestration endpoint) will consume `build` and
+  `save` directly and provide the tz-aware `now` from a single UTC clock.

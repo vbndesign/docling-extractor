@@ -1,0 +1,116 @@
+storyId: "1.1"
+storyTitle: "Project Scaffolding & Configuration"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "e3cb137"
+reviewer: "Quinn (@qa)"
+reviewedAt: "2026-04-18"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+verdict: PASS
+summary: >
+  All 9 acceptance criteria verified against the actual artifacts. Smoke test
+  reproduced independently (uvicorn on 127.0.0.1:8766, GET /health -> 200
+  {"status":"ok"}, zero warnings). Ruff lint + format pass on backend/. No
+  gitignored paths tracked. Scope is intentionally minimal; code is clean.
+
+acceptance_criteria:
+  - id: AC1
+    requirement: "Folder tree (backend/, frontend/, tests/, output/) per arch §9"
+    status: met
+    evidence: "backend/__init__.py, frontend/templates+static (with .gitkeep), tests/__init__.py + fixtures/, output/ (gitignored, empty)"
+  - id: AC2
+    requirement: "pyproject.toml with Python 3.11+ and dependencies pinned with upper bounds"
+    status: met
+    evidence: >
+      requires-python = ">=3.11"; 8 runtime deps and 3 dev deps all use >=X,<Y
+      ranges exactly as specified. Install verified on Python 3.14.0.
+  - id: AC3
+    requirement: "backend/config.py with OUTPUT_DIR, MAX_UPLOAD_MB, REQUEST_TIMEOUT_SECONDS (defaults 50 MB, 60 s, ./output)"
+    status: met
+    evidence: "Frozen dataclass Settings + get_settings() DI. Runtime check: output_dir=output, max_upload_mb=50, request_timeout_seconds=60."
+  - id: AC4
+    requirement: "GET /health returns {\"status\":\"ok\"} with HTTP 200"
+    status: met
+    evidence: "Confirmed via curl; content-type application/json; OpenAPI surface lists only /health."
+  - id: AC5
+    requirement: "uvicorn backend.main:app boots without errors; /health responds in browser/curl"
+    status: met
+    evidence: "Independent boot on port 8766 — clean log at WARN level (zero lines), 200 OK on /health, 404 on /nope as expected."
+  - id: AC6
+    requirement: ".gitignore excludes output/, __pycache__/, .venv/, .env"
+    status: met
+    evidence: "All 4 present. Bonus hardening: *.egg-info/, .pytest_cache/, .ruff_cache/ also excluded."
+  - id: AC7
+    requirement: ".env.example documents the 3 config vars"
+    status: met
+    evidence: "Appended section at end of shared AIOX .env.example with default values and descriptions for OUTPUT_DIR, MAX_UPLOAD_MB, REQUEST_TIMEOUT_SECONDS."
+  - id: AC8
+    requirement: "README covers prerequisites, install, run, health check"
+    status: met
+    evidence: "All 4 sections present; LAN-exposure warning included in Running the server section."
+  - id: AC9
+    requirement: "Initial scaffolding commit; conventional commits message"
+    status: met
+    evidence: "Commit e3cb137 'chore: initial project scaffolding [Story 1.1]' on feature/epic-1-docling-extractor. Git repo was pre-initialized — git init was a no-op as Dev Agent Record documents."
+
+quality_gate_checks:
+  code_review:
+    status: pass
+    notes: "Minimal, idiomatic. `from __future__ import annotations` + frozen dataclass for Settings is correct. Docstrings match intent."
+  unit_tests:
+    status: not_applicable
+    notes: "Story explicitly waives automated tests (Testing section). Smoke test sufficient for AC5."
+  acceptance_criteria:
+    status: pass
+    notes: "9 of 9 met. See acceptance_criteria block above."
+  regressions:
+    status: pass
+    notes: "Additive changes only (.env.example append, .gitignore additions). No prior Python code to regress."
+  performance:
+    status: not_applicable
+    notes: "Scaffolding only; /health is constant-time."
+  security:
+    status: pass
+    notes: "Defaults to 127.0.0.1 bind (honors arch §2.2 R8). README calls out auth absence before --host 0.0.0.0. .env gitignored; .env.example carries no real secrets."
+  documentation:
+    status: pass
+    notes: "README accurate; Dev Agent Record populated; Change Log appended per lifecycle rules."
+
+issues: []
+
+observations:
+  - severity: low
+    category: code
+    file: "backend/config.py:22"
+    description: "`_load_settings()` currently duplicates `get_settings()` with no behavioural difference; the private wrapper adds no value yet."
+    recommendation: "Either inline it now, or keep as-is but give `get_settings()` a real role (e.g., lru_cache, dependency_overrides test hook) when Story 1.2 introduces the first TestClient test."
+    blocking: false
+  - severity: low
+    category: code
+    file: "backend/config.py:24-26"
+    description: "int() on env values has no bounds check — a negative or zero `MAX_UPLOAD_MB` / `REQUEST_TIMEOUT_SECONDS` would be accepted and could silently break Story 1.4 limits, while `OUTPUT_DIR` is stored as-is (no ~ expansion, no resolution)."
+    recommendation: "Defer to Story 1.2/1.3 — add positive-int validation on Settings fields (either post_init or pydantic-settings adoption) and `.expanduser().resolve()` on output_dir where file_writer composes paths."
+    blocking: false
+
+additional_checks_performed:
+  - name: "Ruff lint + format"
+    command: ".venv/Scripts/python.exe -m ruff check backend/ && ruff format --check backend/"
+    result: "All checks passed; 3 files already formatted."
+  - name: "Gitignore compliance"
+    command: "git ls-files | grep -Ei 'output/|.venv/|.egg-info|.env$|__pycache__'"
+    result: "No matches — no gitignored paths are tracked."
+  - name: "OpenAPI surface audit"
+    command: "curl /openapi.json | jq .paths"
+    result: "Routes: ['/health'] only. No accidental endpoints."
+  - name: "Package import smoke"
+    command: ".venv/Scripts/python.exe -c 'from backend.config import get_settings, Settings; ...'"
+    result: "Import + Settings instantiation successful with defaults."
+
+recommendation_next: >
+  Status can move to "Done" once @devops pushes feature/epic-1-docling-extractor.
+  Carry the two low-severity observations into Story 1.2 context (Settings
+  validation) and Story 1.3 context (output_dir resolution) rather than
+  reopening 1.1.

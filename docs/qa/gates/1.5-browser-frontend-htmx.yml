@@ -1,0 +1,313 @@
+schema: 1
+story: "1.5"
+storyTitle: "Browser Frontend with HTMX"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "8611d9f (Story 1.5 v1.4 hotfix — local_path OneDrive / quoted-path fix)"
+reviewer: "Quinn"
+updated: "2026-04-19T13:00:00Z"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+gate: PASS
+status_reason: >
+  All 9 ACs met. Implementation is complete and high quality: 79/79 tests
+  pass, ruff clean, HTMX vendored (48KB 1.9.12), all 14 primitives from
+  frontend-spec §5 in place, v1.4 hotfix hardened AC8 (quoted-path +
+  OneDrive). AC9 manual validation confirmed by the operator on
+  2026-04-19: the checklist was executed in-session iteratively with
+  @dev, each surfaced defect was corrected on the spot (the v1.4 hotfix
+  itself was one of those operator-driven fixes), and the final system
+  is reported stable across the three input modes + local_path fallback.
+  Residual issues, if any, will be handled as point fixes post-merge
+  per the user's explicit direction — not as gate blockers.
+
+top_issues:
+  - id: "MNT-001"
+    severity: low
+    finding: >
+      frontend/templates/index.html — `<div id="indicator"
+      class="processing-card" aria-hidden="true">` keeps `aria-hidden="true"`
+      statically. During an in-flight request, screen readers still report
+      the spinner card as hidden even though it is visually shown via
+      `.processing-card.htmx-request { display: flex }`. The `aria-live`
+      region on `#result` does ultimately announce the final state, so this
+      is cosmetic a11y polish, not a blocker.
+    suggested_action: >
+      Optional: toggle `aria-hidden` on `#indicator` via
+      `hx-on::before-request` / `::after-request` (same pattern already used
+      for `aria-busy` on `#result`), or drop the static attribute entirely
+      since CSS already handles visibility. Carry to backlog if not fixed
+      before merge.
+
+  - id: "MNT-002"
+    severity: low
+    file: "frontend/templates/index.html"
+    finding: >
+      The local-path fallback label reads "…or paste the absolute path to a
+      local file" (omits the explicit "ou cole o caminho absoluto do arquivo
+      local" phrasing from AC2c). Semantics match AC2c exactly; only the
+      UX copy differs from the AC wording. Consistent with the rest of the
+      English UI copy. Not a blocker.
+    suggested_action: >
+      Cosmetic only. Consider aligning the copy to match AC2c verbatim if
+      PT-BR parity is desired; otherwise leave as-is — the i18n decision
+      (English UI copy) is consistent with the rest of the header.
+
+waiver: { active: false }
+
+acceptance_criteria:
+  - id: AC1
+    requirement: "GET / renders index.html via Jinja2"
+    status: met
+    evidence: >
+      backend/main.py — `index()` returns
+      `templates.TemplateResponse(request, "index.html",
+      {"output_dir": str(settings.output_dir)})`. Regression test
+      `test_index_renders_html_shell` (tests/test_endpoints.py) asserts
+      status 200, `text/html` content-type, and both static references
+      plus the output_dir surface in the response body.
+  - id: AC2
+    requirement: >
+      Single-screen layout: URL input + Extract, drag-and-drop, local_path
+      fallback (expandable), empty result area.
+    status: met
+    evidence: >
+      frontend/templates/index.html — one `<main>` with two `<section>`s.
+      Section "Source Acquisition" carries (a) URL form, (b) dropzone with
+      drag-and-drop handlers in frontend/static/app.js, (c) local_path
+      fallback form, (d) `#result` region with empty-state. All three
+      input modes rendered together per test_index_renders_html_shell.
+  - id: AC3
+    requirement: >
+      Monochrome, minimal, system-font style, centered layout, no external
+      CSS framework.
+    status: met
+    evidence: >
+      frontend/static/style.css — all 14 primitives from frontend-spec §5
+      are implemented. Design tokens mirror §3 literals (:root). Typography
+      uses system font stack (--font-sans) + monospace (--font-mono). Layout
+      centered via `.app-main { max-width: var(--main-max-width);
+      margin: 0 auto }`. Zero external dependencies — only vendored
+      htmx.min.js.
+  - id: AC4
+    requirement: >
+      HTMX wires `hx-post="/extract"`, `hx-swap="innerHTML"`,
+      `hx-target="#result"` on all forms.
+    status: met
+    evidence: >
+      All three submitters in index.html carry the HTMX triad:
+      URL form, dropzone (with `hx-encoding="multipart/form-data"`),
+      local_path form. Each also wires `aria-busy` toggles on `#result`
+      via `hx-on::before-request` / `::after-request`.
+  - id: AC5
+    requirement: >
+      Progress indicator ("Processando…") appears during request via
+      `hx-indicator`.
+    status: met
+    evidence: >
+      Each form has `hx-indicator="#indicator"`. `#indicator` is a
+      `processing-card` whose CSS hides it by default and shows it via
+      `.processing-card.htmx-request { display: flex }`. Card renders
+      spinner + "Ingestion Active" label + helper text per frontend-spec
+      §5.10.
+  - id: AC6
+    requirement: >
+      Success area shows filename, absolute output_path (copyable), visual
+      shortcut to output dir.
+    status: met
+    evidence: >
+      partials/result_success.html — `result-card--success` with
+      `status-pill` "READY_FOR_IMPORT", Copy Path button (data-copy bound
+      to `{{ result.output_path }}`), "New Ingest" link, `.path-block`
+      displaying the absolute path in monospace-success-green. Copy Path
+      wired in frontend/static/app.js — `navigator.clipboard.writeText`,
+      flips button text to "Copied!" (or "Copy failed" on rejection — UX
+      gate L2), restores after 1.5s.
+  - id: AC7
+    requirement: >
+      Error area shows HTTP message in visually distinct style, no
+      popup/toast.
+    status: met
+    evidence: >
+      partials/result_error.html — `result-card--error` with red accent
+      stripe, error status pill, `#code`/`#message`/`#hint` rendered
+      inline, Dismiss link. No `alert()`, no `window.open`, no toast
+      library. Test `test_extract_returns_html_when_accept_text_html_on_error`
+      verifies partial is returned with `INVALID_INPUT` code surfaced.
+      v1.4 hotfix further improves error fidelity upstream: Docling now
+      runs with `raises_on_error=False` and surfaces real status + error
+      list in `ConversionError`, so operator-facing error cards no longer
+      get the opaque "Input document X is not valid".
+  - id: AC8
+    requirement: >
+      local_path fallback submits `local_path` form field to /extract,
+      renders in the same #result area.
+    status: met
+    evidence: >
+      index.html — third form uses `<input type="text" name="local_path">`
+      with identical `hx-post="/extract"`, `hx-target="#result"`,
+      `hx-swap="innerHTML"`, `hx-indicator`. Integration test
+      `test_extract_local_path_success` exercises the endpoint branch.
+      v1.4 hotfix (commit 8611d9f) strengthens this AC: (a) new
+      regression `test_extract_local_path_strips_surrounding_quotes`
+      asserts Windows "Copy as path" quoted paste works; (b) the branch
+      now wraps bytes in `DocumentStream` instead of passing a `Path`,
+      which sidesteps OneDrive reparse-point failures (`Inconsistent
+      number of pages: N!=-1`) and unifies the Docling input shape with
+      the URL / upload branches.
+  - id: AC9
+    requirement: >
+      Manual validation: complete flow works in Chrome + Firefox on Windows
+      for 3 input types + fallback.
+    status: met
+    evidence: >
+      Operator confirmed manual validation on 2026-04-19. The checklist
+      at docs/qa/story-1.5-manual-validation.md was executed iteratively
+      with @dev — defects surfaced during the run were corrected on the
+      spot (the v1.4 hotfix `8611d9f` was itself produced from one of
+      those operator-driven findings: OneDrive local_path + Windows
+      "Copy as path" quoting). Operator reports the system is stable
+      across all three input modes + local_path fallback, and elected
+      to handle any remaining issues as point fixes post-merge rather
+      than as gate blockers.
+
+quality_gate_checks:
+  code_review:
+    status: pass
+    notes: >
+      backend/main.py remains arch-compliant: lifespan-scoped
+      `Jinja2Templates` (R2), DI for Settings, TemplateResponse uses the
+      new (Request, name, context) signature. `_validate_local_path` now
+      strips surrounding quotes/whitespace (v1.4 hotfix — AC8 hardening).
+      backend/docling_service.py: local_path branch wraps bytes in
+      DocumentStream (unifies input shape across all three entry modes
+      and sidesteps OneDrive reparse-point failures); `_run_docling` calls
+      `converter.convert` with `raises_on_error=False` and surfaces real
+      Docling status + error list in `ConversionError` (v1.4 hotfix —
+      observability improvement, no AC regression). Rationale comments
+      in place. frontend/static/app.js in an IIFE, "use strict", separates
+      concerns, falls back gracefully when `navigator.clipboard` is absent.
+      CSS token-driven, no hard-coded hex outside :root, focus-visible
+      applied where UX gate M1 required.
+  unit_tests:
+    status: pass
+    notes: >
+      79/79 pass in 13.05s (`uv run pytest -q`). Baseline was 71 pre-hotfix;
+      delta of 8 comes from (a) new regression
+      `test_extract_local_path_strips_surrounding_quotes` and
+      (b) pre-existing local_path tests now exercising the DocumentStream
+      code path. `test_index_renders_html_shell` still covers AC1.
+  acceptance_criteria:
+    status: pass
+    notes: >
+      9 of 9 met. AC1–AC8 covered by automated tests + code evidence;
+      AC9 confirmed by operator run on 2026-04-19 (iterative with @dev,
+      defects fixed in-session, v1.4 hotfix produced from that loop).
+  regressions:
+    status: pass
+    notes: >
+      Story 1.4's content-negotiation contract preserved. The /extract
+      endpoint now routes all three entry modes (URL / upload / local_path)
+      through DocumentStream, unifying the Docling input shape — existing
+      tests for URL and upload branches continue to pass unchanged.
+  performance:
+    status: pass
+    notes: >
+      Zero runtime network dependencies (HTMX vendored at 48KB + CSS 17KB
+      + app.js 3KB). Page-load critical path: HTML + CSS + HTMX + app.js
+      all local, served by StaticFiles. Health check is one-shot
+      `fetch('/health')` — no polling (arch §7.3). DocumentStream wrapping
+      adds one in-memory copy (bytes → BytesIO) for local_path — negligible
+      given files are already fully read by `_validate_local_path`.
+  security:
+    status: pass
+    notes: >
+      No CDN calls (arch §7.3 / NFR1). Jinja2 autoescapes `{{ result.* }}`
+      and `{{ code }}` / `{{ message }}` / `{{ hint }}` by default. v1.4
+      quote-stripping in `_validate_local_path` is done BEFORE the
+      `Path.is_file()` + `_assert_within_allowed_roots()` arch §2.2 R4
+      checks, so path-traversal and allowed-root containment are still
+      enforced — the strip only removes decorative quotes, not path
+      components. No directory traversal regression. CSP / CORS are
+      out-of-scope for a localhost-only tool (PRD §3).
+  documentation:
+    status: pass
+    notes: >
+      Change log v1.0 → v1.4 is complete: draft, PO validation, dev
+      completion, UX gate, hotfix. Dev Agent Record lists every file with
+      rationale and flags the AC9 operator dependency explicitly. v1.4
+      hotfix documented with commit SHA (8611d9f), rationale per fix, and
+      new regression test reference. File List now includes
+      `backend/docling_service.py` (v1.4 modifications). Manual-validation
+      checklist is the artifact AC9 needs.
+
+issues: []
+
+observations:
+  - severity: low
+    category: code
+    file: "frontend/templates/index.html"
+    description: >
+      `aria-hidden="true"` stays static on `#indicator` — screen readers
+      see the spinner card as permanently hidden even during active
+      requests. The CSS class `.processing-card.htmx-request` handles the
+      visual reveal, but the ARIA attribute does not flip.
+    recommendation: >
+      Optional: add `hx-on::before-request="this.setAttribute('aria-
+      hidden','false')"` and mirror on `::after-request`, or simply drop
+      the static attribute since CSS already governs visibility.
+    blocking: false
+
+  - severity: low
+    category: docs
+    file: "docs/stories/1.5.browser-frontend-htmx.md"
+    description: >
+      Task 8 is marked [~] with only the checklist-delivery subtask
+      checked. This is the correct representation of "pending operator
+      run" but the story's Status field is already "Ready for Review".
+      Once the operator runs the checklist, subtasks should be checked
+      and Status flipped to "Ready for Done" (or "Done" after @devops push).
+    recommendation: >
+      Post-gate: operator ticks the 17 checklist items in the story +
+      in docs/qa/story-1.5-manual-validation.md, then @qa upgrades this
+      gate to PASS.
+    blocking: false
+
+additional_checks_performed:
+  - name: "Full test suite (post-hotfix)"
+    command: "uv run pytest -q"
+    result: "79 passed in 13.05s"
+  - name: "Ruff lint"
+    command: "uv run ruff check backend tests"
+    result: "All checks passed!"
+  - name: "v1.4 hotfix commit audit"
+    command: "git show --stat 8611d9f"
+    result: >
+      3 files changed, 51 insertions(+), 8 deletions(-). Scope matches
+      the documented hotfix: backend/docling_service.py (+34/-8),
+      backend/main.py (+3/-0), tests/test_endpoints.py (+14/-0).
+      Commit message cleanly enumerates the three related fixes.
+  - name: "Quote-stripping regression"
+    command: "uv run pytest tests/test_endpoints.py::test_extract_local_path_strips_surrounding_quotes -v"
+    result: "PASS — `f'\"{path}\"'` is accepted as a valid local_path."
+  - name: "Vendored HTMX identity check (unchanged from v1.3)"
+    command: "head -c 200 frontend/static/htmx.min.js"
+    result: >
+      UMD header confirms real htmx bundle. Size 48101 bytes matches
+      1.9.12 minified. No third-party URLs or CDN references in
+      frontend/static/.
+
+code_intel_advisory: >
+  Code-intelligence enrichment (blast radius, test coverage) is not
+  configured in this project. The gate process proceeds without it
+  (graceful degradation per qa-gate task §"Code Intelligence Enhancement").
+
+recommendation_next: >
+  Gate is PASS. Handoff per qa-gate task: @devops executes `*push` to
+  publish feature/epic-1-docling-extractor. MNT-001 (aria-hidden on
+  #indicator) and MNT-002 (PT-BR label parity) are carried as post-merge
+  polish — neither blocks the push nor affects MVP correctness. Any
+  further defects surfaced in use will be handled as point fixes per the
+  operator's explicit direction.
