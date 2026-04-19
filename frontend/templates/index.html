@@ -98,6 +98,8 @@
               class="dropzone"
               hx-encoding="multipart/form-data"
               hx-post="/extract"
+              hx-trigger="submit"
+              hx-include="#pdf-file-input"
               hx-target="#result"
               hx-swap="innerHTML"
               hx-indicator="#indicator"
