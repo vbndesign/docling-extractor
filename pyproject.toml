@@ -47,3 +47,7 @@ select = ["E", "F", "W", "I", "UP", "B"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: tests that invoke the real Docling pipeline (excluded by default; run with `pytest -m slow`)",
+]

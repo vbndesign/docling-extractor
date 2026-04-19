@@ -98,9 +98,7 @@ def test_extract_url_html_success(test_client, install_http_client, test_setting
     _assert_file_has_frontmatter_and_body(output_path)
 
 
-def test_extract_url_pdf_success(
-    test_client, install_http_client, sample_pdf_bytes, test_settings
-):
+def test_extract_url_pdf_success(test_client, install_http_client, sample_pdf_bytes, test_settings):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "HEAD":
             return httpx.Response(200, headers={"content-type": "application/pdf"})
@@ -133,9 +131,7 @@ def test_extract_upload_pdf_success(test_client, sample_pdf_bytes, test_settings
 
 
 def test_extract_local_path_success(test_client, sample_pdf_path, test_settings):
-    response = test_client.post(
-        "/extract", data={"local_path": str(sample_pdf_path.resolve())}
-    )
+    response = test_client.post("/extract", data={"local_path": str(sample_pdf_path.resolve())})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -169,7 +165,7 @@ def test_extract_multiple_inputs_returns_400(test_client, sample_pdf_bytes):
     assert response.json()["code"] == "INVALID_INPUT"
 
 
-def test_extract_oversized_upload_returns_413(test_client, test_settings):
+def test_extract_oversized_upload_maps_to_413(test_client, test_settings):
     # test_settings limits to 1 MB; craft a 2 MB payload that still starts with %PDF-.
     oversized = b"%PDF-" + b"x" * (2 * 1024 * 1024)
     files = {"file": ("big.pdf", oversized, "application/pdf")}
@@ -178,7 +174,10 @@ def test_extract_oversized_upload_returns_413(test_client, test_settings):
     assert response.json()["code"] == "UPLOAD_TOO_LARGE"
 
 
-def test_extract_unreachable_url_returns_502(test_client, install_http_client):
+def test_extract_url_returns_404_maps_to_502(test_client, install_http_client):
+    # Story 1.6 AC1 caso (a): upstream 404 surfaces to the caller as 502
+    # SOURCE_FETCH_FAILED — we do not fabricate 404s from the extractor's
+    # own envelope since the origin *responded*, it just didn't have the doc.
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 
@@ -189,9 +188,7 @@ def test_extract_unreachable_url_returns_502(test_client, install_http_client):
     assert response.json()["code"] == "SOURCE_FETCH_FAILED"
 
 
-def test_extract_local_path_strips_surrounding_quotes(
-    test_client, sample_pdf_path, test_settings
-):
+def test_extract_local_path_strips_surrounding_quotes(test_client, sample_pdf_path, test_settings):
     # Windows Explorer's "Copy as path" wraps paths in double quotes; the
     # endpoint must accept that natural paste form (AC8 hardening).
     quoted = f'"{sample_pdf_path.resolve()}"'
@@ -218,7 +215,7 @@ def test_extract_local_path_not_pdf_returns_400(test_client, tmp_path):
     assert response.json()["code"] == "INVALID_INPUT"
 
 
-def test_extract_timeout_returns_504(
+def test_extract_conversion_timeout_maps_to_504(
     test_client, set_run_docling, sample_pdf_bytes, test_settings
 ):
     # Override the request timeout to 1 s and make _run_docling sleep 2 s.
@@ -248,9 +245,7 @@ def test_extract_timeout_returns_504(
 # --------------------------------------------------------------------------- #
 
 
-def test_extract_returns_json_when_no_accept_header(
-    test_client, sample_pdf_bytes
-):
+def test_extract_returns_json_when_no_accept_header(test_client, sample_pdf_bytes):
     response = test_client.post(
         "/extract",
         files={"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")},
@@ -259,9 +254,7 @@ def test_extract_returns_json_when_no_accept_header(
     assert response.headers["content-type"].startswith("application/json")
 
 
-def test_extract_returns_json_when_accept_application_json(
-    test_client, sample_pdf_bytes
-):
+def test_extract_returns_json_when_accept_application_json(test_client, sample_pdf_bytes):
     response = test_client.post(
         "/extract",
         files={"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")},
@@ -271,9 +264,7 @@ def test_extract_returns_json_when_accept_application_json(
     assert response.headers["content-type"].startswith("application/json")
 
 
-def test_extract_returns_html_when_accept_text_html_on_success(
-    test_client, sample_pdf_bytes
-):
+def test_extract_returns_html_when_accept_text_html_on_success(test_client, sample_pdf_bytes):
     response = test_client.post(
         "/extract",
         files={"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")},
@@ -293,9 +284,7 @@ def test_extract_returns_html_when_accept_text_html_on_error(test_client):
     assert "INVALID_INPUT" in response.text
 
 
-def test_extract_returns_html_when_htmx_request_without_accept_html(
-    test_client, sample_pdf_bytes
-):
+def test_extract_returns_html_when_htmx_request_without_accept_html(test_client, sample_pdf_bytes):
     # HTMX does not set Accept: text/html on XHR (browser default is */*);
     # HX-Request: true is the reliable signal that the caller wants the
     # server-rendered partial. Without this contract, the frontend would
@@ -311,9 +300,7 @@ def test_extract_returns_html_when_htmx_request_without_accept_html(
 
 
 def test_extract_returns_html_when_htmx_request_on_error(test_client):
-    response = test_client.post(
-        "/extract", headers={"Accept": "*/*", "HX-Request": "true"}
-    )
+    response = test_client.post("/extract", headers={"Accept": "*/*", "HX-Request": "true"})
     assert response.status_code == 400
     assert response.headers["content-type"].startswith("text/html")
     assert "result-card--error" in response.text
@@ -327,9 +314,7 @@ def test_extract_returns_html_when_htmx_request_on_error(test_client):
 # --------------------------------------------------------------------------- #
 
 
-def test_extract_upload_pdf_writes_valid_frontmatter(
-    test_client, sample_pdf_bytes, test_settings
-):
+def test_extract_upload_pdf_writes_valid_frontmatter(test_client, sample_pdf_bytes, test_settings):
     files = {"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")}
     response = test_client.post("/extract", files=files)
     assert response.status_code == 200
@@ -348,3 +333,62 @@ def test_extract_rejects_empty_string_url(test_client, bad_value):
     response = test_client.post("/extract", data={"url": bad_value})
     assert response.status_code == 400
     assert response.json()["code"] == "INVALID_INPUT"
+
+
+# --------------------------------------------------------------------------- #
+# CORNER CASES (Story 1.6 AC1/AC2)
+# --------------------------------------------------------------------------- #
+
+
+def test_extract_empty_html_maps_to_422(test_client, install_http_client, set_run_docling):
+    # Story 1.6 AC1 caso (b): a JS-rendered SPA serves a mostly empty HTML
+    # shell; Docling sees no text nodes and returns an empty markdown. The
+    # service must surface CONVERSION_FAILED with a clear SPA hint instead
+    # of writing a .md file with only frontmatter.
+    empty_shell = b"<html><body></body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-type": "text/html"})
+        return httpx.Response(200, content=empty_shell, headers={"content-type": "text/html"})
+
+    install_http_client(handler)
+    set_run_docling(lambda source, *, converter: ("", {}))  # noqa: ARG005
+
+    response = test_client.post("/extract", data={"url": "https://spa.example.com/"})
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "CONVERSION_FAILED"
+    assert "SPA" in body["message"] or "JavaScript" in body["message"]
+
+
+def test_extract_scanned_pdf_maps_to_422_with_ocr_hint(test_client, set_run_docling, fixtures_dir):
+    # Story 1.6 AC1 caso (c) + AC2: the scanned.pdf fixture is a valid 1-page
+    # PDF with zero text runs. _run_docling is stubbed to return empty
+    # markdown (simulating no OCR), and the service must reject with an
+    # OCR-specific message rather than producing a .md with an empty body.
+    set_run_docling(lambda source, *, converter: ("", {}))  # noqa: ARG005
+
+    scanned = fixtures_dir / "scanned.pdf"
+    with scanned.open("rb") as fh:
+        files = {"file": ("scanned.pdf", fh.read(), "application/pdf")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "CONVERSION_FAILED"
+    assert "OCR" in body["message"]
+    assert "v1" in body["message"]
+
+
+def test_extract_non_pdf_file_maps_to_400(test_client):
+    # Story 1.6 AC1 caso (d): a user uploads a .txt (or any non-PDF) via the
+    # "file" field. The %PDF- magic-byte check in docling_service rejects it
+    # with INVALID_INPUT long before Docling is ever invoked.
+    files = {"file": ("note.txt", b"this is plain text, not a pdf", "text/plain")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["code"] == "INVALID_INPUT"
+    assert "PDF" in body["message"]

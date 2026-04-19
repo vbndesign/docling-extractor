@@ -111,9 +111,7 @@ def _validate_local_path(raw: str) -> Path:
     with path.open("rb") as handle:
         head = handle.read(len(PDF_MAGIC))
     if not head.startswith(PDF_MAGIC):
-        raise InvalidInputError(
-            f"local_path is not a valid PDF (missing %PDF- magic bytes): {raw}"
-        )
+        raise InvalidInputError(f"local_path is not a valid PDF (missing %PDF- magic bytes): {raw}")
     return path
 
 
@@ -132,9 +130,7 @@ async def _run_pipeline(
     files (arch §R1).
     """
 
-    er: ExtractionResult = await extract(
-        source, http_client=http_client, converter=converter
-    )
+    er: ExtractionResult = await extract(source, http_client=http_client, converter=converter)
 
     def _persist() -> SaveResult:
         fm = build(er.metadata, er.source, now=datetime.now(tz=UTC))
@@ -153,9 +149,7 @@ async def extract_endpoint(
 ) -> Response:
     # AC1/AC2 — exactly one of the three fields must be provided.
     provided = [
-        name
-        for name, value in (("url", url), ("file", file), ("local_path", local_path))
-        if value
+        name for name, value in (("url", url), ("file", file), ("local_path", local_path)) if value
     ]
     if len(provided) != 1:
         raise InvalidInputError(
@@ -170,23 +164,17 @@ async def extract_endpoint(
     elif file is not None:
         # AC3 — reject oversized uploads BEFORE reading the body.
         if file.size is not None and file.size > max_bytes:
-            raise UploadTooLargeError(
-                f"Upload exceeds {settings.max_upload_mb} MB limit."
-            )
+            raise UploadTooLargeError(f"Upload exceeds {settings.max_upload_mb} MB limit.")
         data = await file.read()
         if len(data) > max_bytes:
-            raise UploadTooLargeError(
-                f"Upload exceeds {settings.max_upload_mb} MB limit."
-            )
+            raise UploadTooLargeError(f"Upload exceeds {settings.max_upload_mb} MB limit.")
         source = _NamedBytesIO(data, name=file.filename or "upload.pdf")
     else:
         # local_path branch (fallback FR9).
         assert local_path is not None
         path = _validate_local_path(local_path)
         if path.stat().st_size > max_bytes:
-            raise UploadTooLargeError(
-                f"local_path file exceeds {settings.max_upload_mb} MB limit."
-            )
+            raise UploadTooLargeError(f"local_path file exceeds {settings.max_upload_mb} MB limit.")
         source = path
 
     # AC6 — hard timeout around the whole pipeline.

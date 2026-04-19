@@ -140,9 +140,7 @@ async def test_extract_pdf_upload_success(
     upload.name = "my-upload.pdf"  # type: ignore[attr-defined]
 
     async with make_test_http_client(lambda r: httpx.Response(500)) as client:
-        result = await extract(
-            upload, http_client=client, converter=dummy_converter
-        )
+        result = await extract(upload, http_client=client, converter=dummy_converter)
 
     assert result.source.kind == "pdf_upload"
     assert result.source.original_filename == "my-upload.pdf"
@@ -206,9 +204,7 @@ async def test_extract_corrupted_pdf_raises_conversion_error(
 
     async with make_test_http_client(lambda r: httpx.Response(500)) as client:
         with pytest.raises(ConversionError):
-            await extract(
-                sample_pdf_path, http_client=client, converter=dummy_converter
-            )
+            await extract(sample_pdf_path, http_client=client, converter=dummy_converter)
 
 
 @pytest.mark.asyncio
@@ -279,9 +275,7 @@ async def test_extract_html_result_contains_no_image_markup(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "HEAD":
             return httpx.Response(200, headers={"Content-Type": "text/html"})
-        return httpx.Response(
-            200, headers={"Content-Type": "text/html"}, content=html_with_image
-        )
+        return httpx.Response(200, headers={"Content-Type": "text/html"}, content=html_with_image)
 
     async with make_test_http_client(handler) as client:
         result = await extract(
@@ -337,7 +331,11 @@ def test_make_http_client_uses_documented_config():
 async def test_http_client_sends_user_agent(make_test_http_client, dummy_converter, monkeypatch):
     """AC9 via MockTransport: UA + Accept headers reach the server."""
 
-    _patch_run_docling(monkeypatch, markdown="# x\n", metadata={})
+    _patch_run_docling(
+        monkeypatch,
+        markdown="# Title\n\nBody paragraph extracted by the mock.\n",
+        metadata={},
+    )
 
     seen_headers: dict[str, str] = {}
 

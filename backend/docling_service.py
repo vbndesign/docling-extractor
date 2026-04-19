@@ -37,13 +37,20 @@ Source = str | Path | BinaryIO
 HttpClient = httpx.AsyncClient | CurlAsyncSession
 
 PDF_MAGIC = b"%PDF-"
+
+# Minimum stripped markdown length below which we treat the conversion as
+# "produced no usable content". The real failure mode is a scanned PDF (no
+# OCR) or a JS-rendered SPA — Docling yields a page-shell with zero text
+# runs, which stringifies to a few whitespace/heading chars. 10 is a small
+# non-zero threshold: it rejects empty/whitespace output without false-
+# positiving real short docs (a 1-line note still exceeds it).
+_MIN_MARKDOWN_CHARS = 10
 HTTP_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 HTTP_ACCEPT = (
-    "text/html,application/xhtml+xml,application/xml;q=0.9,"
-    "application/pdf;q=0.9,*/*;q=0.8"
+    "text/html,application/xhtml+xml,application/xml;q=0.9," "application/pdf;q=0.9,*/*;q=0.8"
 )
 HTTP_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 HTTP_IMPERSONATE = "chrome"
@@ -129,12 +136,10 @@ def _run_docling(
     status_name = getattr(status, "name", str(status))
     if status_name not in {"SUCCESS", "PARTIAL_SUCCESS"}:
         errors = getattr(result, "errors", None) or []
-        error_details = "; ".join(
-            getattr(e, "error_message", None) or str(e) for e in errors
-        ) or "no details"
-        raise ConversionError(
-            f"Docling conversion status={status_name}: {error_details}"
+        error_details = (
+            "; ".join(getattr(e, "error_message", None) or str(e) for e in errors) or "no details"
         )
+        raise ConversionError(f"Docling conversion status={status_name}: {error_details}")
 
     try:
         markdown = result.document.export_to_markdown()
@@ -177,9 +182,7 @@ async def _detect_url_kind(url: str, *, http_client: HttpClient) -> SourceKind:
         raise SourceFetchError(f"Failed to fetch {url}: {exc}") from exc
 
     if range_response.status_code >= 400:
-        raise SourceFetchError(
-            f"Non-success status {range_response.status_code} fetching {url}"
-        )
+        raise SourceFetchError(f"Non-success status {range_response.status_code} fetching {url}")
 
     prefix = range_response.content[:1024]
     if prefix.startswith(PDF_MAGIC):
@@ -197,15 +200,32 @@ async def _fetch_bytes(url: str, *, http_client: HttpClient) -> bytes:
         raise SourceFetchError(f"Failed to fetch {url}: {exc}") from exc
 
     if response.status_code >= 400:
-        raise SourceFetchError(
-            f"Non-success status {response.status_code} fetching {url}"
-        )
+        raise SourceFetchError(f"Non-success status {response.status_code} fetching {url}")
     return response.content
 
 
 def _is_url(value: Any) -> bool:
-    return isinstance(value, str) and (
-        value.startswith("http://") or value.startswith("https://")
+    return isinstance(value, str) and (value.startswith("http://") or value.startswith("https://"))
+
+
+def _guard_non_empty_markdown(markdown: str, kind: SourceKind) -> None:
+    """Raise `ConversionError` with a kind-specific hint if markdown is empty.
+
+    Story 1.6 AC2: a scanned PDF (no extractable text) or a JS-rendered SPA
+    would otherwise produce a `.md` with only frontmatter and an empty body.
+    The error message steers the user to the real cause (no OCR / no JS)
+    rather than letting them chase a silent success.
+    """
+
+    if len(markdown.strip()) >= _MIN_MARKDOWN_CHARS:
+        return
+    if kind == "url_html":
+        raise ConversionError(
+            "Extracted content is empty. "
+            "JavaScript-rendered pages (SPA) are not supported in v1."
+        )
+    raise ConversionError(
+        "PDF appears to be scanned without extractable text. " "OCR is not enabled in v1."
     )
 
 
@@ -228,9 +248,7 @@ async def extract(
         body = await _fetch_bytes(url, http_client=http_client)
         stream_name = "remote.pdf" if kind == "url_pdf" else "remote.html"
         docling_input = DocumentStream(name=stream_name, stream=io.BytesIO(body))
-        markdown, meta = await asyncio.to_thread(
-            _run_docling, docling_input, converter=converter
-        )
+        markdown, meta = await asyncio.to_thread(_run_docling, docling_input, converter=converter)
         if kind == "url_html":
             for key, value in _parse_html_meta(body).items():
                 if value:
@@ -242,18 +260,14 @@ async def extract(
         if not isinstance(data, bytes | bytearray):
             raise InvalidInputError("File-like source must yield bytes from .read()")
         if not data.startswith(PDF_MAGIC):
-            raise InvalidInputError(
-                "Uploaded file is not a valid PDF (missing %PDF- magic bytes)"
-            )
+            raise InvalidInputError("Uploaded file is not a valid PDF (missing %PDF- magic bytes)")
         name = getattr(source, "name", None) or "upload.pdf"
         if isinstance(name, str):
             display_name = Path(name).name
         else:
             display_name = "upload.pdf"
         docling_input = DocumentStream(name=display_name, stream=io.BytesIO(bytes(data)))
-        markdown, meta = await asyncio.to_thread(
-            _run_docling, docling_input, converter=converter
-        )
+        markdown, meta = await asyncio.to_thread(_run_docling, docling_input, converter=converter)
         descriptor = SourceDescriptor(
             kind="pdf_upload",
             location=display_name,
@@ -265,14 +279,10 @@ async def extract(
         if not path.exists() or not path.is_file():
             raise InvalidInputError(f"File not found: {path}")
         if path.suffix.lower() != ".pdf":
-            raise InvalidInputError(
-                f"Only .pdf files are supported for local paths: {path}"
-            )
+            raise InvalidInputError(f"Only .pdf files are supported for local paths: {path}")
         data = path.read_bytes()
         if not data.startswith(PDF_MAGIC):
-            raise InvalidInputError(
-                f"File is not a valid PDF (missing %PDF- magic bytes): {path}"
-            )
+            raise InvalidInputError(f"File is not a valid PDF (missing %PDF- magic bytes): {path}")
         # Wrap in DocumentStream rather than passing the Path directly:
         # OneDrive reparse points (and some other special filesystems) can
         # break Docling's path-based backends with
@@ -280,9 +290,7 @@ async def extract(
         # path is unaffected. This also unifies the Docling input shape
         # across URL / upload / local_path branches.
         docling_input = DocumentStream(name=path.name, stream=io.BytesIO(data))
-        markdown, meta = await asyncio.to_thread(
-            _run_docling, docling_input, converter=converter
-        )
+        markdown, meta = await asyncio.to_thread(_run_docling, docling_input, converter=converter)
         descriptor = SourceDescriptor(
             kind="pdf_local_path",
             location=str(path.resolve()),
@@ -290,9 +298,9 @@ async def extract(
         )
 
     else:
-        raise InvalidInputError(
-            f"Unsupported source type: {type(source).__name__}"
-        )
+        raise InvalidInputError(f"Unsupported source type: {type(source).__name__}")
+
+    _guard_non_empty_markdown(markdown, descriptor.kind)
 
     year = meta.get("year")
     if isinstance(year, str) and year.isdigit():

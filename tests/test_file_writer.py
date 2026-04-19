@@ -44,9 +44,7 @@ def test_save_uses_title_as_filename(tmp_path: Path, fixed_now: datetime) -> Non
     assert _read_written(result) == FRONTMATTER + "\n" + BODY
 
 
-def test_save_uses_original_filename_when_no_title(
-    tmp_path: Path, fixed_now: datetime
-) -> None:
+def test_save_uses_original_filename_when_no_title(tmp_path: Path, fixed_now: datetime) -> None:
     """AC6 — for PDF sources without a title, fall back to the upload's stem."""
 
     metadata = ExtractedMetadata()
@@ -88,9 +86,7 @@ def test_save_applies_kebab_case_slug(tmp_path: Path, fixed_now: datetime) -> No
     assert result.filename == "ola-acai-cafe-sao-paulo.md"
 
 
-def test_save_collision_appends_incremental_suffix(
-    tmp_path: Path, fixed_now: datetime
-) -> None:
+def test_save_collision_appends_incremental_suffix(tmp_path: Path, fixed_now: datetime) -> None:
     """AC7 — saving the same name three times yields `.md`, `-2.md`, `-3.md`."""
 
     metadata = ExtractedMetadata(source_title="Same Title")
@@ -110,9 +106,7 @@ def test_save_collision_appends_incremental_suffix(
     }
 
 
-def test_save_long_title_truncated_to_200_chars(
-    tmp_path: Path, fixed_now: datetime
-) -> None:
+def test_save_long_title_truncated_to_200_chars(tmp_path: Path, fixed_now: datetime) -> None:
     """arch §2.2 R5 — slug is capped at 200 chars before suffix + extension."""
 
     long_title = "word " * 80  # 400 chars of content, slugify will cut to 200
@@ -137,9 +131,7 @@ def test_save_empty_slug_fallback(tmp_path: Path, fixed_now: datetime) -> None:
     assert result.filename == f"document-{expected_ts}.md"
 
 
-def test_save_returns_absolute_path_and_filename(
-    tmp_path: Path, fixed_now: datetime
-) -> None:
+def test_save_returns_absolute_path_and_filename(tmp_path: Path, fixed_now: datetime) -> None:
     """AC6 — `output_path` is absolute and `filename` is the basename."""
 
     metadata = ExtractedMetadata(source_title="Absolute Path Check")

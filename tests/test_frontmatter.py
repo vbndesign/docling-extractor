@@ -103,7 +103,7 @@ def test_build_escapes_special_chars(fixed_now) -> None:
     """AC5 — quotes, colons, and Windows backslashes survive a YAML round-trip."""
 
     nasty_title = 'A: "title" with \\backslashes\\ and: colons'
-    nasty_author = "O'Brien, \"M.\""
+    nasty_author = 'O\'Brien, "M."'
     metadata = ExtractedMetadata(source_title=nasty_title, author=nasty_author)
     source = SourceDescriptor(
         kind="pdf_local_path",

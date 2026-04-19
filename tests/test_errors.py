@@ -78,9 +78,7 @@ def test_every_catalog_hint_is_non_empty():
 def _make_app(exc: Exception) -> FastAPI:
     app = FastAPI()
     templates_dir = str(
-        __import__("pathlib").Path(__file__).resolve().parent.parent
-        / "frontend"
-        / "templates"
+        __import__("pathlib").Path(__file__).resolve().parent.parent / "frontend" / "templates"
     )
     from fastapi.templating import Jinja2Templates
 
