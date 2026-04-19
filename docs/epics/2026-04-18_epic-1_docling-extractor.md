@@ -22,7 +22,7 @@ Entregar, de forma incremental, uma ferramenta local com interface browser que a
 | # | Story | Status | ACs | PRD Ref | Dependências | Insumo Primário para Dev Notes |
 |---|-------|--------|-----|---------|--------------|-------------------------------|
 | 1.1 | Project Scaffolding & Configuration | Ready | 9 | PRD §6 Story 1.1 | — | PRD §4 + arch §9 |
-| 1.2 | Core Docling Extraction Service | Draft | 9 | PRD §6 Story 1.2 | 1.1 | arch §5.1, §6.3, §10.1, §2.2 R1/R3 |
+| 1.2 | Core Docling Extraction Service | Ready | 9 | PRD §6 Story 1.2 | 1.1 | arch §5.1, §6.3, §10.1, §2.2 R1/R3 |
 | 1.3 | Frontmatter Builder & File Writer | Draft | 9 | PRD §6 Story 1.3 | 1.2 | arch §5.1, §6.3, §2.2 R5–R6 |
 | 1.4 | Extraction API Endpoint | Draft | 9 (AC9 new em v1.3) | PRD §6 Story 1.4 | 1.3 | arch §7.2, **§7.3** (AC9), §10.2 |
 | 1.5 | Browser Frontend with HTMX | Draft | 9 | PRD §6 Story 1.5 | 1.4 | **frontend-spec v1.1** (canônico) + arch §7.3 |
@@ -73,6 +73,7 @@ Epic 1 é considerado `Done` quando:
 | 2026-04-18 15:15 | @pm (Morgan) | — | **Epic 1 sharded (this file)** |
 | 2026-04-18 15:45 | @sm (River) | @po | **6 stories drafted** em `docs/stories/1.1`…`1.6` (plural request from user — deviation from PRD §5 strict-sequential-draft invariant). Pronto para `*validate-story-draft` começando pela 1.1. |
 | 2026-04-18 | @po (Pax) | @dev | **Story 1.1 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Ready para `@dev *develop 1.1`. |
+| 2026-04-18 | @po (Pax) | @dev | **Story 1.2 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Should-Fix advisory: AC5 image-absence test assertion (non-blocking). Ready para `@dev *develop 1.2`. |
 
 ---
 

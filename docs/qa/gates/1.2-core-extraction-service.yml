@@ -1,0 +1,218 @@
+storyId: "1.2"
+storyTitle: "Core Docling Extraction Service"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "uncommitted (working tree)"
+reviewer: "Quinn (@qa)"
+reviewedAt: "2026-04-19"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+verdict: PASS
+summary: >
+  All 9 acceptance criteria met. 12/12 unit tests pass in 5.71s (warm cache);
+  ruff clean on backend/ and tests/. Exception boundary (arch §10.3) is
+  respected — the service only raises DoclingExtractorError subclasses and
+  every Docling/httpx failure is translated. `_run_docling` provides the
+  mockable seam required by arch §2.1 A3. HTTP client factory matches AC9
+  exactly, and AC5 carries the @po advisory image-absence assertion that
+  was listed as Should-Fix during validation.
+
+acceptance_criteria:
+  - id: AC1
+    requirement: "extract() accepts HTML URL, PDF URL, local PDF path, or file-like PDF upload"
+    status: met
+    evidence: >
+      backend/docling_service.py:168–239 dispatches on `_is_url`, `hasattr(source,'read')`,
+      and `isinstance(source, str|Path)`. Covered by 4 happy-path tests:
+      test_extract_html_url_success, test_extract_pdf_url_success,
+      test_extract_local_pdf_success, test_extract_pdf_upload_success.
+  - id: AC2
+    requirement: "Type detection via HEAD + Content-Type; local via extension/MIME"
+    status: met
+    evidence: >
+      `_detect_url_kind` prefers HEAD content-type (`text/html*` or
+      `application/pdf`); on non-2xx HEAD (405, network error), falls back to a
+      Range GET and sniffs %PDF- / '<' magic bytes (arch §2.2 R3). Local paths
+      check suffix `.pdf` and re-validate magic bytes before dispatch.
+      test_extract_head_fallback_to_magic_bytes and the happy-path tests
+      exercise both branches.
+  - id: AC3
+    requirement: "Returns (markdown, metadata) with omitted-when-None fields"
+    status: met
+    evidence: >
+      Returns frozen `ExtractionResult(markdown, metadata: ExtractedMetadata,
+      source: SourceDescriptor)`. Optional metadata fields default to None;
+      year coerced from str digits where possible. Frontmatter omission is the
+      responsibility of the writer in Story 1.3 — the service returns Optionals
+      per contract.
+  - id: AC4
+    requirement: "Uses DocumentConverter with defaults (no OCR, no custom pipeline)"
+    status: met
+    evidence: >
+      `_run_docling` calls `converter.convert(source)` with no pipeline
+      configuration. The converter is injected, never instantiated inside the
+      service (arch §3.4 lifespan singleton). No OCR flags set.
+  - id: AC5
+    requirement: "Markdown contains no image markup"
+    status: met
+    evidence: >
+      test_extract_html_result_contains_no_image_markup feeds an HTML with an
+      embedded <img> and asserts the returned markdown contains neither `![`
+      nor `<img`. This is the @po Should-Fix advisory from validation,
+      addressed.
+  - id: AC6
+    requirement: "Fixtures committed; tests exercise the 3 input paths"
+    status: met
+    evidence: >
+      tests/fixtures/sample.html (682 B, valid <title>+<meta name=author>) and
+      tests/fixtures/sample.pdf (637 B, hand-crafted minimal valid PDF — smaller
+      than the 20 KB suggestion but still parseable by Docling per dev smoke).
+      Four paths covered (html_url, pdf_url, pdf_local_path, pdf_upload).
+  - id: AC7
+    requirement: "Failure cases covered for each path"
+    status: met
+    evidence: >
+      test_extract_corrupted_pdf_raises_conversion_error (ConversionError),
+      test_extract_unreachable_url_raises_source_fetch_error (SourceFetchError),
+      test_extract_unsupported_local_file_raises_invalid_input,
+      test_extract_pdf_upload_without_magic_raises_invalid_input. Every
+      exception class in the story's scope has at least one failure test.
+  - id: AC8
+    requirement: "Service raises typed exceptions (no generic leaks)"
+    status: met
+    evidence: >
+      backend/errors.py defines DoclingExtractorError + InvalidInputError
+      (400), SourceFetchError (502), ConversionError (422). `_run_docling`
+      catches the broad `Exception` from Docling and re-raises as
+      ConversionError; `_fetch_bytes` and `_detect_url_kind` translate
+      `httpx.RequestError` to SourceFetchError. Grep confirmed zero
+      `HTTPException` references in backend/.
+  - id: AC9
+    requirement: "httpx.AsyncClient configured with UA, timeout, max_redirects=5"
+    status: met
+    evidence: >
+      `make_http_client()` builds the client with
+      `headers={"User-Agent": "docling-extractor/1.0"}`,
+      `httpx.Timeout(30.0, connect=10.0)`, `follow_redirects=True`,
+      `max_redirects=5`. Verified by test_make_http_client_uses_documented_config
+      (direct attribute inspection) and test_http_client_sends_user_agent
+      (header observed by MockTransport).
+
+quality_gate_checks:
+  code_review:
+    status: pass
+    notes: >
+      Clean module docstring declares the exception-boundary invariant.
+      Public surface is narrow (`extract`, `make_http_client`, `HTTP_USER_AGENT`,
+      `PDF_MAGIC`). Private helpers (`_run_docling`, `_detect_url_kind`,
+      `_fetch_bytes`, `_parse_html_meta`, `_is_url`) keep responsibilities
+      sharp. PEP 604 union types throughout. `DocumentStream` + `io.BytesIO`
+      used for URL paths so the service never writes to disk (honors
+      arch §2.2 R1).
+  unit_tests:
+    status: pass
+    notes: >
+      12/12 pass. 5.71s warm / 76s cold (cold-start dominated by Docling
+      module import transitively; not this story's code). Mocks isolate
+      `_run_docling`; `httpx.MockTransport` isolates the network layer.
+      `@pytest.mark.asyncio` applied consistently.
+  acceptance_criteria:
+    status: pass
+    notes: "9 of 9 met. See acceptance_criteria block above."
+  regressions:
+    status: pass
+    notes: >
+      All changes are additive — 7 new files, zero modifications to Story 1.1
+      code. `backend/config.py` and existing /health endpoint untouched.
+  performance:
+    status: pass
+    notes: >
+      Warm-cache suite runs in 5.71s, well under the <10s target for this
+      story and compatible with the <60s global budget (Story 1.6 AC5).
+      Cold Docling import (~70s) will be revisited in Story 1.6 CI context.
+  security:
+    status: pass
+    notes: >
+      Service receives all dependencies via DI (http_client, converter) —
+      no globals. HTTP client constrains blast radius with max_redirects=5,
+      30s total timeout, 10s connect timeout, identifiable User-Agent.
+      Magic-byte validation before Docling invocation reduces surface for
+      malformed-file exploits reaching the parser. No shell, no
+      subprocess, no eval.
+  documentation:
+    status: pass
+    notes: >
+      Module docstring, class docstrings, and helper docstrings clearly state
+      intent and invariants. Story Dev Agent Record is comprehensive; File
+      List is accurate.
+
+issues: []
+
+observations:
+  - severity: low
+    category: code
+    file: "backend/docling_service.py:55-81"
+    description: >
+      `_parse_html_meta` uses regex over raw bytes for `<title>` and
+      `<meta name="author">`. Adequate for well-formed HTML head sections, but
+      fragile against unusual encodings, CDATA, or author metadata split
+      across multi-line tags.
+    recommendation: >
+      Acceptable for Story 1.2 scope. If Story 1.3 expands the metadata
+      surface (e.g., OpenGraph, JSON-LD, publication date), switch to
+      stdlib `html.parser` — no third-party dep required.
+    blocking: false
+  - severity: low
+    category: tests
+    file: "tests/test_docling_service.py"
+    description: >
+      pytest-asyncio emitted 630 `DeprecationWarning` lines (own internals,
+      not your code). It is noise in the default output and obscures genuine
+      warnings.
+    recommendation: >
+      Optionally add `[tool.pytest.ini_options] filterwarnings =
+      ["ignore::DeprecationWarning:pytest_asyncio.*"]` to pyproject.toml in
+      Story 1.6. Non-blocking.
+    blocking: false
+  - severity: low
+    category: code
+    file: "backend/docling_service.py:182-183"
+    description: >
+      `url = source  # type: ignore[assignment]` works but leans on a
+      `# type: ignore` comment because `_is_url` is not a typing-aware
+      TypeGuard. Minor maintainability nit.
+    recommendation: >
+      Optional: declare `def _is_url(value: object) -> TypeGuard[str]` so
+      the downstream assignment no longer needs the pragma. Non-blocking.
+    blocking: false
+
+additional_checks_performed:
+  - name: "Unit suite (warm)"
+    command: ".venv/Scripts/python.exe -m pytest tests/test_docling_service.py"
+    result: "12 passed in 5.71s"
+  - name: "Unit suite (cold)"
+    command: ".venv/Scripts/python.exe -m pytest tests/test_docling_service.py -v"
+    result: "12 passed in 76.31s (cold Docling import — one-time cost per process)"
+  - name: "Ruff lint"
+    command: ".venv/Scripts/python.exe -m ruff check backend/ tests/"
+    result: "All checks passed!"
+  - name: "Exception-boundary audit (arch §10.3)"
+    command: "grep for HTTPException / generic raise in backend/"
+    result: "Zero HTTPException imports; all `raise` sites use DoclingExtractorError subclasses."
+  - name: "Disk-write audit (arch §2.2 R1)"
+    command: "grep for open(...,'w'), Path.write_*, shutil.copy in service"
+    result: "No writes in backend/docling_service.py. URL bodies streamed via io.BytesIO."
+  - name: "File List vs working tree"
+    command: "ls backend/*.py tests/*.py tests/fixtures/*"
+    result: >
+      Matches Dev Agent Record exactly (7 created; 0 modified). No stray
+      artifacts.
+
+recommendation_next: >
+  Status can move to "Ready for Done"; @dev should update the Status field
+  (currently "Ready for Review") and @devops pushes feature/epic-1-docling-extractor.
+  Carry the 3 low-severity observations forward: regex → html.parser in
+  Story 1.3 if metadata surface grows; pytest warning filter in Story 1.6;
+  TypeGuard refinement is purely cosmetic.
