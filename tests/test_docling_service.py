@@ -14,7 +14,12 @@ import httpx
 import pytest
 
 from backend import docling_service
-from backend.docling_service import HTTP_USER_AGENT, extract, make_http_client
+from backend.docling_service import (
+    HTTP_IMPERSONATE,
+    HTTP_USER_AGENT,
+    extract,
+    make_http_client,
+)
 from backend.errors import ConversionError, InvalidInputError, SourceFetchError
 from backend.models import ExtractionResult
 
@@ -293,15 +298,21 @@ async def test_extract_html_result_contains_no_image_markup(
 
 
 def test_make_http_client_uses_documented_config():
-    """AC9 (revised): browser-like UA + Accept headers, timeouts, redirect cap.
+    """AC9 (revised again): curl_cffi session with TLS impersonation + headers.
 
-    The UA is a Chrome string (not the original `docling-extractor/1.0`
-    token) because Cloudflare-fronted publishers (e.g. nngroup.com) reject
-    bare-token UAs with 403. See module docstring in docling_service.py.
+    Earlier iterations relied on browser-like UA alone, which bypassed
+    Cloudflare tier 1 (e.g. nngroup.com) but not tier 2 JA3/JA4 TLS
+    fingerprinting (e.g. medium.com returned 403). The client now uses
+    `curl_cffi` with `impersonate="chrome"` so the TLS ClientHello matches
+    Chrome's fingerprint, while still exposing the same documented headers
+    for debuggability.
     """
+
+    from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
     client = make_http_client()
     try:
+        assert isinstance(client, CurlAsyncSession)
         ua = client.headers.get("user-agent")
         assert ua is not None
         assert ua.startswith("Mozilla/5.0")
@@ -311,14 +322,14 @@ def test_make_http_client_uses_documented_config():
         assert "text/html" in accept
         assert "application/pdf" in accept
         assert client.headers.get("accept-language", "").startswith("en")
-        assert client.timeout.connect == 10.0
-        assert client.timeout.read == 30.0
-        assert client.timeout.write == 30.0
-        assert client.timeout.pool == 30.0
-        assert client.follow_redirects is True
+        # curl_cffi stores timeout as a plain number and the impersonate name
+        # as an attribute; both matter for the AC9 contract.
+        assert client.timeout == 30
+        assert client.impersonate == HTTP_IMPERSONATE
+        assert client.allow_redirects is True
         assert client.max_redirects == 5
     finally:
-        # AsyncClient.close() is async; the constructor merely allocated state.
+        # AsyncSession.close() is async; the constructor merely allocated state.
         pass
 
 

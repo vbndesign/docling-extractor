@@ -4,8 +4,8 @@ Wires the extraction pipeline behind a single `POST /extract` endpoint and
 serves the (Story 1.5) HTMX frontend. Follows the architectural invariants
 of arch §2.2, §7, §10:
 
-* `DocumentConverter`, `httpx.AsyncClient`, and `Jinja2Templates` are
-  lifespan-scoped singletons (R2).
+* `DocumentConverter`, the async HTTP client (curl_cffi, TLS-impersonating),
+  and `Jinja2Templates` are lifespan-scoped singletons (R2).
 * The endpoint does not use `try/except`; all translation happens in the
   global handlers registered in `backend.errors` (arch §10.3).
 * The CPU-bound stages (`build`, `save`) run in the default threadpool via
@@ -41,7 +41,7 @@ from .frontmatter import build
 from .models import ExtractionResult, SaveResult
 
 if TYPE_CHECKING:
-    import httpx
+    from .docling_service import HttpClient
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -63,7 +63,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await app.state.http_client.aclose()
+        # httpx.AsyncClient exposes `aclose`; curl_cffi AsyncSession exposes `close`.
+        # Tests inject the former, production uses the latter.
+        client = app.state.http_client
+        shutdown = getattr(client, "aclose", None) or client.close
+        await shutdown()
 
 
 app = FastAPI(title="Docling Extractor", version="0.1.0", lifespan=lifespan)
@@ -113,15 +117,16 @@ def _validate_local_path(raw: str) -> Path:
 async def _run_pipeline(
     source: object,
     *,
-    http_client: httpx.AsyncClient,
+    http_client: HttpClient,
     converter: DocumentConverter,
     output_dir: Path,
 ) -> SaveResult:
     """Orchestrate extract → build → save for a single request.
 
-    `extract` is async because it uses `httpx`; the pure CPU/IO stages
-    (`build` + `save`) are offloaded to the default threadpool so the
-    event loop stays responsive even on large files (arch §R1).
+    `extract` is async because it performs HTTP I/O via the injected
+    client; the pure CPU/IO stages (`build` + `save`) are offloaded to the
+    default threadpool so the event loop stays responsive even on large
+    files (arch §R1).
     """
 
     er: ExtractionResult = await extract(

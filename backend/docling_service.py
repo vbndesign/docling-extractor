@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 import httpx
+from curl_cffi.requests import AsyncSession as CurlAsyncSession
+from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 from docling.datamodel.base_models import DocumentStream
 from docling.document_converter import DocumentConverter
 
@@ -32,6 +34,7 @@ from .errors import ConversionError, InvalidInputError, SourceFetchError
 from .models import ExtractedMetadata, ExtractionResult, SourceDescriptor, SourceKind
 
 Source = str | Path | BinaryIO
+HttpClient = httpx.AsyncClient | CurlAsyncSession
 
 PDF_MAGIC = b"%PDF-"
 HTTP_USER_AGENT = (
@@ -43,25 +46,34 @@ HTTP_ACCEPT = (
     "application/pdf;q=0.9,*/*;q=0.8"
 )
 HTTP_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+HTTP_IMPERSONATE = "chrome"
+
+_REQUEST_ERRORS: tuple[type[Exception], ...] = (httpx.RequestError, CurlRequestException)
 
 
-def make_http_client() -> httpx.AsyncClient:
+def make_http_client() -> CurlAsyncSession:
     """Factory for the shared async HTTP client.
 
-    Browser-like User-Agent plus Accept / Accept-Language headers are required
-    to bypass bot-protection on common publisher sites (e.g. Cloudflare-fronted
-    nngroup.com returns 403 for a bare token UA). Timeouts (30 s total / 10 s
-    connect) and the 5-hop redirect cap from Story 1.2 AC9 are preserved.
+    Uses ``curl_cffi`` with TLS impersonation because browser-like headers
+    alone are no longer sufficient against Cloudflare's fingerprinting tier
+    used by sites like medium.com (httpx's OpenSSL TLS ClientHello is
+    flagged as a bot even with a Chrome User-Agent). Impersonating Chrome's
+    JA3/JA4 TLS + HTTP/2 fingerprint restores parity with a real browser.
+
+    Timeouts (30 s total / 10 s connect preserved as a single 30 s cap since
+    curl_cffi exposes one timeout knob) and the 5-hop redirect cap from
+    Story 1.2 AC9 are preserved.
     """
 
-    return httpx.AsyncClient(
+    return CurlAsyncSession(
+        impersonate=HTTP_IMPERSONATE,
         headers={
             "User-Agent": HTTP_USER_AGENT,
             "Accept": HTTP_ACCEPT,
             "Accept-Language": HTTP_ACCEPT_LANGUAGE,
         },
-        timeout=httpx.Timeout(30.0, connect=10.0),
-        follow_redirects=True,
+        timeout=30,
+        allow_redirects=True,
         max_redirects=5,
     )
 
@@ -120,7 +132,7 @@ def _run_docling(
     return markdown, metadata
 
 
-async def _detect_url_kind(url: str, *, http_client: httpx.AsyncClient) -> SourceKind:
+async def _detect_url_kind(url: str, *, http_client: HttpClient) -> SourceKind:
     """Decide whether `url` points at HTML or PDF.
 
     Prefers a HEAD + Content-Type check; if the origin rejects HEAD (405,
@@ -128,10 +140,10 @@ async def _detect_url_kind(url: str, *, http_client: httpx.AsyncClient) -> Sourc
     sniffs magic bytes.
     """
 
-    head_response: httpx.Response | None = None
+    head_response: Any = None
     try:
         head_response = await http_client.head(url)
-    except httpx.RequestError:
+    except _REQUEST_ERRORS:
         head_response = None
 
     if head_response is not None and head_response.status_code < 400:
@@ -143,7 +155,7 @@ async def _detect_url_kind(url: str, *, http_client: httpx.AsyncClient) -> Sourc
 
     try:
         range_response = await http_client.get(url, headers={"Range": "bytes=0-1023"})
-    except httpx.RequestError as exc:
+    except _REQUEST_ERRORS as exc:
         raise SourceFetchError(f"Failed to fetch {url}: {exc}") from exc
 
     if range_response.status_code >= 400:
@@ -160,10 +172,10 @@ async def _detect_url_kind(url: str, *, http_client: httpx.AsyncClient) -> Sourc
     raise InvalidInputError(f"Could not determine content type of {url}")
 
 
-async def _fetch_bytes(url: str, *, http_client: httpx.AsyncClient) -> bytes:
+async def _fetch_bytes(url: str, *, http_client: HttpClient) -> bytes:
     try:
         response = await http_client.get(url)
-    except httpx.RequestError as exc:
+    except _REQUEST_ERRORS as exc:
         raise SourceFetchError(f"Failed to fetch {url}: {exc}") from exc
 
     if response.status_code >= 400:
@@ -182,7 +194,7 @@ def _is_url(value: Any) -> bool:
 async def extract(
     source: Source,
     *,
-    http_client: httpx.AsyncClient,
+    http_client: HttpClient,
     converter: DocumentConverter,
 ) -> ExtractionResult:
     """Extract Markdown and metadata from any supported source.
