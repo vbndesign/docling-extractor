@@ -114,14 +114,32 @@ def _run_docling(
 
     Isolated so unit tests can monkeypatch it and avoid invoking the real
     (slow) Docling pipeline. Translates any Docling exception into the
-    typed `ConversionError`.
+    typed `ConversionError`. We pass ``raises_on_error=False`` so that a
+    non-SUCCESS status surfaces Docling's own error list in the message
+    (the default ``raises_on_error=True`` throws a generic "Input document
+    X is not valid" that hides the real cause).
     """
 
     try:
-        result = converter.convert(source_for_docling)
-        markdown = result.document.export_to_markdown()
-    except Exception as exc:  # Docling raises a variety of subclasses
+        result = converter.convert(source_for_docling, raises_on_error=False)
+    except Exception as exc:  # Transport / unexpected failures only
         raise ConversionError(f"Docling conversion failed: {exc}") from exc
+
+    status = getattr(result, "status", None)
+    status_name = getattr(status, "name", str(status))
+    if status_name not in {"SUCCESS", "PARTIAL_SUCCESS"}:
+        errors = getattr(result, "errors", None) or []
+        error_details = "; ".join(
+            getattr(e, "error_message", None) or str(e) for e in errors
+        ) or "no details"
+        raise ConversionError(
+            f"Docling conversion status={status_name}: {error_details}"
+        )
+
+    try:
+        markdown = result.document.export_to_markdown()
+    except Exception as exc:
+        raise ConversionError(f"Docling markdown export failed: {exc}") from exc
 
     metadata: dict[str, Any] = {}
     doc = getattr(result, "document", None)
@@ -250,13 +268,21 @@ async def extract(
             raise InvalidInputError(
                 f"Only .pdf files are supported for local paths: {path}"
             )
-        with path.open("rb") as handle:
-            head = handle.read(len(PDF_MAGIC))
-        if not head.startswith(PDF_MAGIC):
+        data = path.read_bytes()
+        if not data.startswith(PDF_MAGIC):
             raise InvalidInputError(
                 f"File is not a valid PDF (missing %PDF- magic bytes): {path}"
             )
-        markdown, meta = await asyncio.to_thread(_run_docling, path, converter=converter)
+        # Wrap in DocumentStream rather than passing the Path directly:
+        # OneDrive reparse points (and some other special filesystems) can
+        # break Docling's path-based backends with
+        # "Inconsistent number of pages: N!=-1", while the in-memory stream
+        # path is unaffected. This also unifies the Docling input shape
+        # across URL / upload / local_path branches.
+        docling_input = DocumentStream(name=path.name, stream=io.BytesIO(data))
+        markdown, meta = await asyncio.to_thread(
+            _run_docling, docling_input, converter=converter
+        )
         descriptor = SourceDescriptor(
             kind="pdf_local_path",
             location=str(path.resolve()),

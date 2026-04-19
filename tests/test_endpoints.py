@@ -189,6 +189,20 @@ def test_extract_unreachable_url_returns_502(test_client, install_http_client):
     assert response.json()["code"] == "SOURCE_FETCH_FAILED"
 
 
+def test_extract_local_path_strips_surrounding_quotes(
+    test_client, sample_pdf_path, test_settings
+):
+    # Windows Explorer's "Copy as path" wraps paths in double quotes; the
+    # endpoint must accept that natural paste form (AC8 hardening).
+    quoted = f'"{sample_pdf_path.resolve()}"'
+    response = test_client.post("/extract", data={"local_path": quoted})
+
+    assert response.status_code == 200, response.text
+    output_path = Path(response.json()["output_path"])
+    assert output_path.is_file()
+    assert output_path.parent == test_settings.output_dir.resolve()
+
+
 def test_extract_local_path_nonexistent_returns_400(test_client, tmp_path):
     missing = tmp_path / "nope.pdf"
     response = test_client.post("/extract", data={"local_path": str(missing)})

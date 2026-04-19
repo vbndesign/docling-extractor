@@ -100,6 +100,9 @@ def index(
 def _validate_local_path(raw: str) -> Path:
     """Enforce arch §2.2 R4 for the `local_path` fallback."""
 
+    # Windows Explorer's "Copy as path" wraps paths in double quotes; strip
+    # surrounding quotes/whitespace so that natural paste flow works.
+    raw = raw.strip().strip('"').strip("'")
     path = Path(raw)
     if not path.is_file():
         raise InvalidInputError(f"local_path does not exist or is not a file: {raw}")
