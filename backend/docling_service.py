@@ -18,6 +18,7 @@ subclasses). Docling/httpx exceptions are translated at the boundary.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 from pathlib import Path
@@ -184,7 +185,9 @@ async def extract(
         body = await _fetch_bytes(url, http_client=http_client)
         stream_name = "remote.pdf" if kind == "url_pdf" else "remote.html"
         docling_input = DocumentStream(name=stream_name, stream=io.BytesIO(body))
-        markdown, meta = _run_docling(docling_input, converter=converter)
+        markdown, meta = await asyncio.to_thread(
+            _run_docling, docling_input, converter=converter
+        )
         if kind == "url_html":
             for key, value in _parse_html_meta(body).items():
                 if value:
@@ -205,7 +208,9 @@ async def extract(
         else:
             display_name = "upload.pdf"
         docling_input = DocumentStream(name=display_name, stream=io.BytesIO(bytes(data)))
-        markdown, meta = _run_docling(docling_input, converter=converter)
+        markdown, meta = await asyncio.to_thread(
+            _run_docling, docling_input, converter=converter
+        )
         descriptor = SourceDescriptor(
             kind="pdf_upload",
             location=display_name,
@@ -226,7 +231,7 @@ async def extract(
             raise InvalidInputError(
                 f"File is not a valid PDF (missing %PDF- magic bytes): {path}"
             )
-        markdown, meta = _run_docling(path, converter=converter)
+        markdown, meta = await asyncio.to_thread(_run_docling, path, converter=converter)
         descriptor = SourceDescriptor(
             kind="pdf_local_path",
             location=str(path.resolve()),
