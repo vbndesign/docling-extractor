@@ -1,6 +1,6 @@
 # Docling Extractor — Backlog
 
-Technical debt and future enhancements tracked outside of numbered stories. Items here are not yet scoped or prioritized into an epic — the PO reviews and promotes them to stories as capacity allows.
+Unscoped enhancements, technical debt, and bugs. Items live here until they are promoted into an epic and drafted as a numbered story in `docs/stories/`. The PO prioritizes; the PM decides epic placement.
 
 ## Legend
 
