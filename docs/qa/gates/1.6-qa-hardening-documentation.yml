@@ -1,0 +1,228 @@
+schema: 1
+story: "1.6"
+storyTitle: "QA Hardening & Documentation"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "uncommitted working tree on feature/epic-1-docling-extractor (10 modified files, 2 new)"
+reviewer: "Quinn"
+updated: "2026-04-19T18:00:00Z"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+gate: PASS
+status_reason: >
+  Technical ACs 1–5 fully met: all six corner cases (a–f) from AC1 have
+  dedicated integration tests with the exact names prescribed in Task 2;
+  AC2's OCR-hint message is enforced by a new `_guard_non_empty_markdown`
+  helper in `backend/docling_service.py` that correctly differentiates
+  between scanned-PDF and SPA-empty-HTML cases; README (AC3) covers the
+  10 required sections including the Swagger UI at `/docs` (S4); ruff
+  lint + format both green (AC4); full suite runs in ~9–11 s on this
+  machine, comfortably under the 60 s AC5 budget. AC6 is this gate
+  (PASS). AC7 (manual E2E of 5 real flows) is by design the author's
+  responsibility; the checklist at
+  `docs/qa/story-1.6-e2e-validation.md` is complete and ready to
+  execute — not blocking the gate since the story lifecycle explicitly
+  defers that sign-off to the author.
+
+top_issues:
+  - id: "MNT-001"
+    severity: low
+    file: "backend/docling_service.py"
+    finding: >
+      `_MIN_MARKDOWN_CHARS = 10` is an arbitrary threshold. A legitimate
+      tiny document (e.g., a one-word poster scan, a business-card PDF
+      with a single short label) would be misclassified as "scanned
+      without text" and trip the guard with an OCR-specific error message.
+      The probability of that happening in this tool's intended use case
+      (literature notes: articles, papers) is extremely low, and the
+      trade-off is explicitly called out in the adjacent comment, so this
+      is an accepted-design note rather than a defect.
+    suggested_action: >
+      Keep as-is for v1. If a false positive surfaces in real use, the
+      threshold is one line to tune, or replace with a richer heuristic
+      (e.g., word count, character density per page).
+
+  - id: "MNT-002"
+    severity: low
+    file: "backend/docling_service.py"
+    finding: >
+      After `ruff format`, `HTTP_ACCEPT` is laid out as two adjacent
+      string literals on a single line inside a parenthesized expression:
+      `"text/html,...;q=0.9," "application/pdf;q=0.9,*/*;q=0.8"`. Python
+      concatenates implicitly at parse time so the runtime string is
+      identical to pre-format behavior, but the visual form is mildly
+      awkward. Cosmetic only; no functional impact.
+    suggested_action: >
+      Optional: rewrite as a single literal or insert a `+` between the
+      pieces if the double-quoted visual form bothers a future reader.
+      Do not fight ruff format for aesthetic preference.
+
+  - id: "MNT-003"
+    severity: low
+    file: "tests/test_docling_service.py"
+    finding: >
+      The pre-existing `test_http_client_sends_user_agent` had its stub
+      markdown updated from `"# x\n"` (3 stripped chars) to
+      `"# Title\n\nBody paragraph extracted by the mock.\n"` so it would
+      not trip the new empty-markdown guard. The test's contract (header
+      propagation) is unchanged; this is a legitimate fixture update, not
+      a weakened assertion. Noted here only so the handoff to any
+      follow-up reviewer is explicit.
+    suggested_action: None — informational only.
+
+  - id: "DOC-001"
+    severity: low
+    file: "backend/errors.py"
+    finding: >
+      `ERROR_CATALOG["CONVERSION_FAILED"]` hint still reads "Source may
+      be corrupted, empty, or a scanned PDF (OCR not supported in v1)."
+      That is a superset of what the per-exception `message` now
+      surfaces for the SPA case (`message`: "Extracted content is empty.
+      JavaScript-rendered pages (SPA) are not supported in v1."). The
+      hint still applies — it describes the class of failure, not a
+      single cause — and the arch §10.2 contract says `hint` gives
+      generic remediation while `message` carries the specific reason.
+      Worth flagging so future readers don't treat the hint as
+      redundant or contradictory.
+    suggested_action: >
+      Optional future polish: make the SPA hint more specific if a
+      second SPA-class error emerges. For now, the generic
+      "corrupted/empty/scanned" hint is intentionally broad and
+      consistent with the arch invariant.
+
+acceptance_criteria:
+  - id: AC1
+    description: >
+      Integration tests cover 6 corner cases (a)–(f) with explicit
+      expectations.
+    status: MET
+    evidence: >
+      tests/test_endpoints.py now has all six named tests:
+      `test_extract_url_returns_404_maps_to_502` (a, line 177),
+      `test_extract_empty_html_maps_to_422` (b, 343),
+      `test_extract_scanned_pdf_maps_to_422_with_ocr_hint` (c, 365),
+      `test_extract_non_pdf_file_maps_to_400` (d, 384),
+      `test_extract_oversized_upload_maps_to_413` (e, 168),
+      `test_extract_conversion_timeout_maps_to_504` (f, 218).
+      All six pass.
+  - id: AC2
+    description: >
+      Scanned-PDF case returns a clear "OCR not enabled in v1" error
+      rather than writing an empty .md.
+    status: MET
+    evidence: >
+      `_guard_non_empty_markdown` in backend/docling_service.py
+      (L215–237) checks stripped markdown length against
+      `_MIN_MARKDOWN_CHARS = 10` and raises ConversionError with the
+      exact hint "PDF appears to be scanned without extractable text.
+      OCR is not enabled in v1." for any non-HTML source.
+      `test_extract_scanned_pdf_maps_to_422_with_ocr_hint` asserts both
+      "OCR" and "v1" are present in `body["message"]` — PASS.
+  - id: AC3
+    description: >
+      README includes all 10 required sections (Visão geral,
+      Pré-requisitos, Instalação, Como rodar, Como usar with Swagger
+      UI, Troubleshooting, Estrutura, Limitações v1, Roadmap v2, Testes).
+    status: MET
+    evidence: >
+      Grep on README.md heading lines confirms all 10 sections plus the
+      explicit Swagger UI subsection pointing to
+      http://127.0.0.1:8000/docs (S4). Troubleshooting covers the 4
+      story-required scenarios (first-boot model download, scanned PDFs,
+      SPA URLs, port-in-use) plus a bonus local_path-quoted-path tip.
+  - id: AC4
+    description: >
+      `ruff check backend tests` and `ruff format --check backend tests`
+      both pass with no pending changes.
+    status: MET
+    evidence: >
+      Independently re-ran both in this gate: "All checks passed!" and
+      "15 files already formatted".
+  - id: AC5
+    description: "pytest suite runs in <60 s on a typical dev machine."
+    status: MET
+    evidence: >
+      82 passed in 8.89s (pytest internal) / ~11.85s wall time.
+      Headroom: ~85%. `[tool.pytest.ini_options]` now registers the
+      `slow` marker and enforces `-m 'not slow'` by default — forward-
+      compatible for future slow-marked tests.
+  - id: AC6
+    description: "QA gate returns PASS or CONCERNS."
+    status: MET
+    evidence: "This gate — verdict PASS."
+  - id: AC7
+    description: >
+      Author executes 5 real E2E flows (3 source types + local_path +
+      1 error case) and confirms each produces the expected result.
+    status: DEFERRED_TO_AUTHOR
+    evidence: >
+      By story design this AC cannot be executed by @qa — it requires
+      the author's machine, network, and real PDFs. The checklist at
+      `docs/qa/story-1.6-e2e-validation.md` is complete, well-structured,
+      and ready for the author to walk through. Does NOT block the
+      gate because AC7 is a manual sign-off inherent to the story, not
+      a verifiable technical criterion.
+
+seven_quality_checks:
+  code_review:
+    status: PASS
+    notes: >
+      `_guard_non_empty_markdown` is small (~20 lines), well-placed
+      (single call site after all branches in `extract`), well-named,
+      and its comment explains WHY (AC2) rather than WHAT. Threshold
+      constant named and documented. Consistent with the arch §10
+      "exception boundary" invariant — still only raises
+      `DoclingExtractorError` subclasses, no leakage.
+  unit_tests:
+    status: PASS
+    notes: >
+      82 tests total (79 pre-1.6 + 3 new corner cases). Six Task-2-named
+      tests in place. Ranged coverage: happy paths, error paths, content
+      negotiation, and now explicit AC1 corner cases. Test isolation is
+      clean — mock-based, offline, no Docling invocation.
+  acceptance_criteria:
+    status: PASS
+    notes: "6/7 ACs verifiable by me — all green. AC7 deferred to author."
+  no_regressions:
+    status: PASS
+    notes: >
+      Only one pre-existing test was touched
+      (`test_http_client_sends_user_agent`): the stub markdown was
+      expanded from 3 to 42 chars so the new guard does not trigger.
+      The test's assertion semantics (UA + Accept + Accept-Language
+      reach the server) are identical.
+  performance:
+    status: PASS
+    notes: "Suite 8.89s / 60s = 85% headroom."
+  security:
+    status: PASS
+    notes: >
+      No new attack surface. %PDF- magic-byte check on uploads and
+      local_path preserved. Localhost default bind unchanged. No new
+      env vars or secrets. The empty-markdown guard only affects error
+      messaging, not auth/authz.
+  documentation:
+    status: PASS
+    notes: >
+      README now documents the OCR limitation (AC2-aligned wording) and
+      the SPA limitation, plus all other required sections. Swagger UI
+      reference present (S4).
+
+recommendations:
+  before_push:
+    - Author should execute the 5 flows in docs/qa/story-1.6-e2e-validation.md and tick the checkboxes (or document any deviations) before @devops performs the final push. Not a gate blocker — a completion step.
+  after_push:
+    - None blocking. The 4 low-severity items (MNT-001, MNT-002, MNT-003, DOC-001) are advisory only.
+
+dev_agent_notes: >
+  Dex's Dev Agent Record is thorough and accurate. Debug log entry about
+  the `scanned.pdf` generation (441 bytes, pypdfium2-validated, 1 page,
+  no text operators) and the pragmatic choice to deviate from the
+  story's "~50KB" target in favor of a strictly-valid minimal PDF is
+  exactly the kind of judgment I want to see documented.
+
+next_steps:
+  - "@author: execute docs/qa/story-1.6-e2e-validation.md and record verdict"
+  - "@devops (Gage): push once author signs off on AC7"
