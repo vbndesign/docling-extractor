@@ -8,6 +8,7 @@ across async tasks. `Optional` metadata fields default to `None` — consumers
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 SourceKind = Literal["url_html", "url_pdf", "pdf_upload", "pdf_local_path"]
@@ -43,3 +44,11 @@ class ExtractionResult:
     markdown: str
     metadata: ExtractedMetadata
     source: SourceDescriptor
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    """Output of `file_writer.save` — returned by the `/extract` endpoint."""
+
+    output_path: Path
+    filename: str
