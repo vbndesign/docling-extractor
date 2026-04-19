@@ -149,21 +149,35 @@ def test_html_and_json_share_the_same_payload():
 
 
 class _FakeRequest:
-    def __init__(self, accept: str | None) -> None:
-        self.headers = {} if accept is None else {"accept": accept}
+    def __init__(self, accept: str | None, hx_request: str | None = None) -> None:
+        self.headers: dict[str, str] = {}
+        if accept is not None:
+            self.headers["accept"] = accept
+        if hx_request is not None:
+            self.headers["hx-request"] = hx_request
 
 
 @pytest.mark.parametrize(
-    ("accept", "expected"),
+    ("accept", "hx_request", "expected"),
     [
-        (None, False),
-        ("", False),
-        ("*/*", False),
-        ("application/json", False),
-        ("application/json, text/html", False),
-        ("text/html", True),
-        ("text/html, application/xhtml+xml", True),
+        # Baseline Accept-only behaviour (no HX-Request).
+        (None, None, False),
+        ("", None, False),
+        ("*/*", None, False),
+        ("application/json", None, False),
+        ("application/json, text/html", None, False),
+        ("text/html", None, True),
+        ("text/html, application/xhtml+xml", None, True),
+        # HTMX signal — browser default Accept is "*/*", so HX-Request is the
+        # reliable hint. HTMX requests must get the HTML partial.
+        ("*/*", "true", True),
+        ("", "true", True),
+        (None, "true", True),
+        # Explicit JSON Accept wins even if HX-Request is set (CLI-style override).
+        ("application/json", "true", False),
+        # HX-Request: false (not emitted by HTMX, defensive check).
+        ("*/*", "false", False),
     ],
 )
-def test_prefers_html_precedence(accept, expected):
-    assert errors.prefers_html(_FakeRequest(accept)) is expected
+def test_prefers_html_precedence(accept, hx_request, expected):
+    assert errors.prefers_html(_FakeRequest(accept, hx_request)) is expected

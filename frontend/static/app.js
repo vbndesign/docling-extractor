@@ -73,6 +73,20 @@
     });
   }
 
+  // AC7 — Render server-side error partials (result_error.html) into #result.
+  // HTMX drops 4xx/5xx responses by default and only fires htmx:responseError;
+  // the backend's content-negotiated HTML error envelope (arch §10.3) must be
+  // swapped in so the user sees result-card--error instead of a silent failure.
+  function wireErrorSwapping() {
+    document.body.addEventListener("htmx:beforeSwap", function (evt) {
+      var status = evt.detail.xhr.status;
+      if (status >= 400 && status < 600) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+      }
+    });
+  }
+
   // §5.1 — One-shot health check (no polling, arch §7.3 rationale).
   function setHealth(variant, label) {
     var dot = document.querySelector("[data-health-dot]");
@@ -97,6 +111,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     wireDropzone();
     wireCopyButtons();
+    wireErrorSwapping();
     pingHealth();
   });
 })();

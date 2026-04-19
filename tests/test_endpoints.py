@@ -279,6 +279,33 @@ def test_extract_returns_html_when_accept_text_html_on_error(test_client):
     assert "INVALID_INPUT" in response.text
 
 
+def test_extract_returns_html_when_htmx_request_without_accept_html(
+    test_client, sample_pdf_bytes
+):
+    # HTMX does not set Accept: text/html on XHR (browser default is */*);
+    # HX-Request: true is the reliable signal that the caller wants the
+    # server-rendered partial. Without this contract, the frontend would
+    # receive raw JSON and render "{...}" into #result.
+    response = test_client.post(
+        "/extract",
+        files={"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")},
+        headers={"Accept": "*/*", "HX-Request": "true"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "result-card--success" in response.text
+
+
+def test_extract_returns_html_when_htmx_request_on_error(test_client):
+    response = test_client.post(
+        "/extract", headers={"Accept": "*/*", "HX-Request": "true"}
+    )
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "result-card--error" in response.text
+    assert "INVALID_INPUT" in response.text
+
+
 # --------------------------------------------------------------------------- #
 # AC8 detail — content validation already covered by success tests via
 # `_assert_file_has_frontmatter_and_body`. Assert explicitly once more for

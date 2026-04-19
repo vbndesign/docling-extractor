@@ -83,14 +83,23 @@ ERROR_CATALOG: dict[str, tuple[str, str]] = {
 def prefers_html(request: Request) -> bool:
     """Return True when the client explicitly prefers HTML over JSON.
 
-    Precedence (arch §7.3): both headers or neither → JSON (preserves the
-    PRD contract for CLI/script clients). Only when the `Accept` header
-    contains `text/html` AND does *not* contain `application/json` do we
-    switch to the HTML partial branch.
+    Precedence (arch §7.3):
+    * Explicit ``Accept: application/json`` always wins → JSON (preserves the
+      PRD contract for CLI/script clients, even if HX-Request is set).
+    * ``Accept`` containing ``text/html`` → HTML.
+    * ``HX-Request: true`` without an explicit JSON Accept → HTML. HTMX does
+      not set ``Accept: text/html`` on XHR (browser default is ``*/*``), so
+      the ``HX-Request`` header is the reliable signal that the caller wants
+      the server-rendered partial rather than the JSON envelope.
+    * Otherwise → JSON.
     """
 
     accept = request.headers.get("accept", "")
-    return "text/html" in accept and "application/json" not in accept
+    if "application/json" in accept:
+        return False
+    if "text/html" in accept:
+        return True
+    return request.headers.get("hx-request", "").lower() == "true"
 
 
 def _resolve_payload(exc: DoclingExtractorError) -> dict[str, str]:
