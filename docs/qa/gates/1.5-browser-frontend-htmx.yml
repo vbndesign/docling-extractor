@@ -1,0 +1,312 @@
+schema: 1
+story: "1.5"
+storyTitle: "Browser Frontend with HTMX"
+epic: "Epic 1 — Docling Extractor"
+branch: "feature/epic-1-docling-extractor"
+commitUnderReview: "uncommitted (working tree — Story 1.5 Tasks 1–7 delivered)"
+reviewer: "Quinn"
+updated: "2026-04-19T00:00:00Z"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+gate: CONCERNS
+status_reason: >
+  Implementation is complete and high quality: 71/71 tests pass, ruff clean,
+  HTMX is vendored (48KB, no CDN), all 14 primitives from frontend-spec §5
+  are in place, UX fixes from v1.3 applied. AC9 (manual browser validation
+  across Chrome + Firefox) has NOT been executed yet — only the checklist
+  artifact was delivered. The gate clears to PASS once the operator runs
+  the checklist at docs/qa/story-1.5-manual-validation.md with no regressions.
+
+top_issues:
+  - id: "TEST-001"
+    severity: medium
+    finding: >
+      AC9 (manual validation across Chrome + Firefox + keyboard-only) is
+      documented but not executed. The story marks Task 8 as [~] with the
+      7 browser runs unchecked. Story Dev Agent Record explicitly notes
+      AC9 is "operator-driven... awaiting operator run."
+    suggested_action: >
+      Operator runs docs/qa/story-1.5-manual-validation.md end-to-end
+      (10 Chrome scenarios + 3 keyboard scenarios + 4 Firefox sanity
+      passes), records output_path values in the validation log, attaches
+      screenshots on any failure. On clean run, upgrade gate PASS and
+      @devops pushes.
+
+  - id: "MNT-001"
+    severity: low
+    finding: >
+      frontend/templates/index.html:185 — `<div id="indicator"
+      class="processing-card" aria-hidden="true">` keeps `aria-hidden="true"`
+      statically. During an in-flight request, screen readers still report
+      the spinner card as hidden even though it is visually shown via
+      `.processing-card.htmx-request { display: flex }`. The `aria-live`
+      region on `#result` does ultimately announce the final state, so this
+      is cosmetic a11y polish, not a blocker.
+    suggested_action: >
+      Optional: toggle `aria-hidden` on `#indicator` via
+      `hx-on::before-request` / `::after-request` (same pattern already used
+      for `aria-busy` on `#result`), or drop the static attribute entirely
+      since CSS already handles visibility.
+
+  - id: "MNT-002"
+    severity: low
+    file: "frontend/templates/index.html:148-150"
+    finding: >
+      The local-path fallback label reads "…or paste the absolute path to a
+      local file" (omits the explicit "ou cole o caminho absoluto do arquivo
+      local" phrasing from AC2c). Semantics match AC2c exactly; only the
+      UX copy differs from the AC wording in the story. Not a blocker.
+    suggested_action: >
+      Cosmetic only. Consider aligning the copy to match AC2c verbatim if
+      PT-BR parity is desired; otherwise leave as-is — the i18n decision
+      (English UI copy) is consistent with the rest of the header.
+
+waiver: { active: false }
+
+acceptance_criteria:
+  - id: AC1
+    requirement: "GET / renders index.html via Jinja2"
+    status: met
+    evidence: >
+      backend/main.py:83-93 — `index()` returns
+      `templates.TemplateResponse(request, "index.html",
+      {"output_dir": str(settings.output_dir)})`. Regression test
+      `test_index_renders_html_shell` (tests/test_endpoints.py:60-73)
+      asserts status 200, `text/html` content-type, and both static
+      references plus the output_dir surface in the response body.
+  - id: AC2
+    requirement: >
+      Single-screen layout: URL input + Extract, drag-and-drop, local_path
+      fallback (expandable), empty result area.
+    status: met
+    evidence: >
+      frontend/templates/index.html:42-213 — one `<main>` with two
+      `<section>`s. Section "Source Acquisition" carries (a) URL form
+      (lines 48-89), (b) dropzone (lines 91-137) with drag-and-drop
+      handlers in frontend/static/app.js:27-49, (c) local_path fallback
+      form (lines 139-178), (d) `#result` region with empty-state
+      (lines 194-211). All three input modes rendered together per
+      test_index_renders_html_shell.
+  - id: AC3
+    requirement: >
+      Monochrome, minimal, system-font style, centered layout, no external
+      CSS framework.
+    status: met
+    evidence: >
+      frontend/static/style.css — all 14 primitives from frontend-spec §5
+      are implemented. Design tokens mirror §3 literals (:root at lines
+      9-51). Typography uses system font stack (--font-sans) + monospace
+      (--font-mono). Layout centered via `.app-main { max-width:
+      var(--main-max-width); margin: 0 auto }` (lines 246-250). Zero
+      external dependencies — `grep -rE "cdn|http" frontend/static/` shows
+      only vendored htmx.min.js.
+  - id: AC4
+    requirement: >
+      HTMX wires `hx-post="/extract"`, `hx-swap="innerHTML"`,
+      `hx-target="#result"` on all forms.
+    status: met
+    evidence: >
+      All three submitters in index.html carry the HTMX triad:
+      URL form (lines 48-55), dropzone (lines 96-109 — with
+      `hx-encoding="multipart/form-data"`), local_path form
+      (lines 140-147). Each also wires `aria-busy` toggles on
+      `#result` via `hx-on::before-request` / `::after-request`.
+  - id: AC5
+    requirement: >
+      Progress indicator ("Processando…") appears during request via
+      `hx-indicator`.
+    status: met
+    evidence: >
+      Each form has `hx-indicator="#indicator"`. `#indicator` is a
+      `processing-card` (index.html:185-192) whose CSS hides it by default
+      and shows it via `.processing-card.htmx-request { display: flex }`
+      (style.css:537-554). The card renders spinner + "Ingestion Active"
+      label + helper text per frontend-spec §5.10.
+  - id: AC6
+    requirement: >
+      Success area shows filename, absolute output_path (copyable), visual
+      shortcut to output dir.
+    status: met
+    evidence: >
+      partials/result_success.html — `result-card--success` with
+      `status-pill` "READY_FOR_IMPORT", Copy Path button (data-copy bound
+      to `{{ result.output_path }}`), "New Ingest" link, `.path-block`
+      displaying the absolute path in monospace-success-green, and helper
+      line "✓ High fidelity extraction complete — {{ result.filename }}".
+      Copy Path wired in frontend/static/app.js:52-74 — uses
+      `navigator.clipboard.writeText`, flips button text to "Copied!"
+      (or "Copy failed" on rejection — UX gate L2), restores after 1.5s.
+  - id: AC7
+    requirement: >
+      Error area shows HTTP message in visually distinct style, no
+      popup/toast.
+    status: met
+    evidence: >
+      partials/result_error.html — `result-card--error` with red
+      accent stripe (style.css:618-620), error status pill, `#code`/
+      `#message`/`#hint` rendered inline, Dismiss link. No `alert()`, no
+      `window.open`, no toast library. Test
+      `test_extract_returns_html_when_accept_text_html_on_error`
+      (tests/test_endpoints.py:274-279) verifies partial is returned
+      with `INVALID_INPUT` code surfaced.
+  - id: AC8
+    requirement: >
+      local_path fallback submits `local_path` form field to /extract,
+      renders in the same #result area.
+    status: met
+    evidence: >
+      index.html:140-178 — third form uses `<input type="text"
+      name="local_path">` with identical `hx-post="/extract"`,
+      `hx-target="#result"`, `hx-swap="innerHTML"`, `hx-indicator`.
+      Integration test `test_extract_local_path_success`
+      (tests/test_endpoints.py:135-145) exercises the endpoint branch;
+      visual parity with the other two modes confirmed by re-use of
+      `result-card--success` / `result-card--error` partials.
+  - id: AC9
+    requirement: >
+      Manual validation: complete flow works in Chrome + Firefox on Windows
+      for 3 input types + fallback.
+    status: pending
+    evidence: >
+      Checklist delivered at docs/qa/story-1.5-manual-validation.md (10
+      Chrome scenarios + 3 keyboard-only + 4 Firefox sanity). No operator
+      execution recorded yet (Task 8 shows 7 unchecked subtasks). Story
+      Dev Agent Record explicitly flags AC9 as awaiting operator run.
+      Automated test suite covers the backend contract (text/html partial
+      returns + status codes) but cannot simulate real-browser DnD,
+      clipboard API, or keyboard focus ordering. This is why the gate is
+      CONCERNS rather than PASS.
+
+quality_gate_checks:
+  code_review:
+    status: pass
+    notes: >
+      backend/main.py remains arch-compliant: lifespan-scoped
+      `Jinja2Templates` (R2), DI for Settings, TemplateResponse uses the
+      new (Request, name, context) signature to avoid the FastAPI
+      DeprecationWarning. frontend/static/app.js is in an IIFE, uses
+      "use strict", separates concerns (dropzone / copy / health), falls
+      back gracefully when `navigator.clipboard` is absent. CSS is token-
+      driven, no hard-coded hex outside :root, focus-visible applied where
+      UX gate M1 required.
+  unit_tests:
+    status: pass
+    notes: >
+      71/71 pass in 15.78s (`uv run pytest -q`). New regression
+      `test_index_renders_html_shell` covers AC1 and the HTML shell
+      contract that all three input modes (`url`, `file`, `local_path`)
+      render on GET /. Pre-existing suite green — no regressions from
+      Story 1.1–1.4.
+  acceptance_criteria:
+    status: concerns
+    notes: >
+      8 of 9 met (AC1–AC8). AC9 pending operator validation — see top
+      issue TEST-001.
+  regressions:
+    status: pass
+    notes: >
+      Story 1.4's content-negotiation contract preserved — tests
+      `test_extract_returns_html_when_accept_text_html_on_success`
+      and `_on_error` updated to match the new class names
+      (`result-card--success` / `result-card--error`) instead of the
+      1.4 placeholder markup. The /extract endpoint itself is byte-
+      identical to 1.4 apart from the Task 7 one-liner on GET /.
+  performance:
+    status: pass
+    notes: >
+      Zero runtime network dependencies (HTMX vendored at 48KB + CSS 17KB
+      + app.js 3KB). Page-load critical path: HTML + CSS + HTMX + app.js
+      all local, served by StaticFiles. Health check is one-shot
+      `fetch('/health')` — no polling (arch §7.3). Well within Story 1.6
+      AC5 <60s budget (the whole frontend budget is p50 <2s on localhost).
+  security:
+    status: pass
+    notes: >
+      No CDN calls (arch §7.3 / NFR1). Jinja2 autoescapes `{{ result.* }}`
+      and `{{ code }}` / `{{ message }}` / `{{ hint }}` by default — the
+      partials place user-controlled values inside `<strong>` and `<p>`
+      text nodes (safe), and inside `data-copy` (Jinja still escapes `"`
+      → `&quot;`). The `{{ output_dir }}` value in the header is server-
+      configured, not user input. Static-file mount is scoped to
+      `frontend/static/` — no directory traversal. CSP / CORS are
+      out-of-scope for a localhost-only tool (PRD §3).
+  documentation:
+    status: pass
+    notes: >
+      Change log v1.0 → v1.3 is complete: draft, PO validation, dev
+      completion, UX gate. Dev Agent Record lists every file with rationale
+      and flags the AC9 operator dependency explicitly. File List matches
+      `git status` output: 4 new (htmx.min.js, style.css, app.js,
+      index.html, validation md), 4 modified (result_success.html,
+      result_error.html, main.py, test_endpoints.py). Manual-validation
+      checklist is the artifact AC9 needs.
+
+issues: []
+
+observations:
+  - severity: low
+    category: code
+    file: "frontend/templates/index.html:185"
+    description: >
+      `aria-hidden="true"` stays static on `#indicator` — screen readers
+      see the spinner card as permanently hidden even during active
+      requests. The CSS class `.processing-card.htmx-request` handles the
+      visual reveal, but the ARIA attribute does not flip.
+    recommendation: >
+      Optional: add `hx-on::before-request="this.setAttribute('aria-
+      hidden','false')"` and mirror on `::after-request`, or simply drop
+      the static attribute since CSS already governs visibility.
+    blocking: false
+
+  - severity: low
+    category: docs
+    file: "docs/stories/1.5.browser-frontend-htmx.md:104"
+    description: >
+      Task 8 is marked [~] with only the checklist-delivery subtask
+      checked. This is the correct representation of "pending operator
+      run" but the story's Status field is already "Ready for Review".
+      Once the operator runs the checklist, subtasks should be checked and
+      Status flipped to "Ready for Done" (or "Done" after @devops push).
+    recommendation: >
+      Post-gate: operator ticks the 17 checklist items in the story +
+      in docs/qa/story-1.5-manual-validation.md, then @qa upgrades this
+      gate to PASS.
+    blocking: false
+
+additional_checks_performed:
+  - name: "Full test suite"
+    command: "uv run pytest -q"
+    result: "71 passed in 15.78s"
+  - name: "Ruff lint"
+    command: "uv run ruff check backend tests"
+    result: "All checks passed!"
+  - name: "Vendored HTMX identity check"
+    command: "head -c 200 frontend/static/htmx.min.js"
+    result: >
+      UMD header confirms real htmx bundle (not a shim). Size 48101 bytes
+      matches 1.9.12 minified. No third-party URLs or CDN references in
+      frontend/static/.
+  - name: "Static-asset network audit"
+    command: "grep -rEi 'cdn|cdnjs|unpkg|http://|https://' frontend/static/ frontend/templates/"
+    result: >
+      Only matches are the HTML `http-equiv`-style placeholders
+      (`https://example.com/document`) used as input placeholders — not
+      runtime dependencies. No CDN fetches at render time.
+  - name: "Content-negotiation regression"
+    command: "uv run pytest tests/test_endpoints.py::test_extract_returns_html_when_accept_text_html_on_success -v"
+    result: "PASS — partial now carries `result-card--success` class."
+
+code_intel_advisory: >
+  Code-intelligence enrichment (blast radius, test coverage) is not
+  configured in this project. The gate process proceeds without it
+  (graceful degradation per qa-gate task §"Code Intelligence Enhancement").
+
+recommendation_next: >
+  Operator runs docs/qa/story-1.5-manual-validation.md
+  end-to-end. On clean pass, @qa upgrades this gate to PASS and @devops
+  executes `*push` to publish feature/epic-1-docling-extractor. On any
+  failure, @dev receives a fix request and the loop re-runs. The two
+  low-severity observations are pure polish and can be deferred — neither
+  blocks merge nor affects MVP correctness.
