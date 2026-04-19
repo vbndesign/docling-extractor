@@ -68,16 +68,24 @@ def make_mock_transport() -> Callable[[Handler], httpx.MockTransport]:
 def make_test_http_client(make_mock_transport):
     """Builds an `httpx.AsyncClient` whose transport is under the test's control.
 
-    The production config (User-Agent, timeout, redirect cap) is mirrored
-    so assertions about those headers remain meaningful.
+    The production config (UA + Accept headers, timeout, redirect cap) is
+    mirrored so assertions about those headers remain meaningful.
     """
 
-    from backend.docling_service import HTTP_USER_AGENT
+    from backend.docling_service import (
+        HTTP_ACCEPT,
+        HTTP_ACCEPT_LANGUAGE,
+        HTTP_USER_AGENT,
+    )
 
     def _factory(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             transport=make_mock_transport(handler),
-            headers={"User-Agent": HTTP_USER_AGENT},
+            headers={
+                "User-Agent": HTTP_USER_AGENT,
+                "Accept": HTTP_ACCEPT,
+                "Accept-Language": HTTP_ACCEPT_LANGUAGE,
+            },
             timeout=httpx.Timeout(30.0, connect=10.0),
             follow_redirects=True,
             max_redirects=5,
@@ -174,12 +182,20 @@ def install_http_client(test_client):
     final one on `app.state` is closed by the lifespan shutdown hook.
     """
 
-    from backend.docling_service import HTTP_USER_AGENT
+    from backend.docling_service import (
+        HTTP_ACCEPT,
+        HTTP_ACCEPT_LANGUAGE,
+        HTTP_USER_AGENT,
+    )
 
     def _install(handler: Callable[[httpx.Request], httpx.Response]) -> None:
         new_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            headers={"User-Agent": HTTP_USER_AGENT},
+            headers={
+                "User-Agent": HTTP_USER_AGENT,
+                "Accept": HTTP_ACCEPT,
+                "Accept-Language": HTTP_ACCEPT_LANGUAGE,
+            },
             timeout=httpx.Timeout(30.0, connect=10.0),
             follow_redirects=True,
             max_redirects=5,

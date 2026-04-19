@@ -293,11 +293,24 @@ async def test_extract_html_result_contains_no_image_markup(
 
 
 def test_make_http_client_uses_documented_config():
-    """AC9: User-Agent, timeouts, redirect cap applied in the factory."""
+    """AC9 (revised): browser-like UA + Accept headers, timeouts, redirect cap.
+
+    The UA is a Chrome string (not the original `docling-extractor/1.0`
+    token) because Cloudflare-fronted publishers (e.g. nngroup.com) reject
+    bare-token UAs with 403. See module docstring in docling_service.py.
+    """
 
     client = make_http_client()
     try:
-        assert client.headers.get("user-agent") == "docling-extractor/1.0"
+        ua = client.headers.get("user-agent")
+        assert ua is not None
+        assert ua.startswith("Mozilla/5.0")
+        assert "Chrome/" in ua
+        accept = client.headers.get("accept")
+        assert accept is not None
+        assert "text/html" in accept
+        assert "application/pdf" in accept
+        assert client.headers.get("accept-language", "").startswith("en")
         assert client.timeout.connect == 10.0
         assert client.timeout.read == 30.0
         assert client.timeout.write == 30.0
@@ -311,7 +324,7 @@ def test_make_http_client_uses_documented_config():
 
 @pytest.mark.asyncio
 async def test_http_client_sends_user_agent(make_test_http_client, dummy_converter, monkeypatch):
-    """AC9 via MockTransport: the User-Agent header reaches the server."""
+    """AC9 via MockTransport: UA + Accept headers reach the server."""
 
     _patch_run_docling(monkeypatch, markdown="# x\n", metadata={})
 
@@ -335,3 +348,5 @@ async def test_http_client_sends_user_agent(make_test_http_client, dummy_convert
         )
 
     assert seen_headers.get("user-agent") == HTTP_USER_AGENT
+    assert "text/html" in seen_headers.get("accept", "")
+    assert seen_headers.get("accept-language", "").startswith("en")

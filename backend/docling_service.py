@@ -34,19 +34,32 @@ from .models import ExtractedMetadata, ExtractionResult, SourceDescriptor, Sourc
 Source = str | Path | BinaryIO
 
 PDF_MAGIC = b"%PDF-"
-HTTP_USER_AGENT = "docling-extractor/1.0"
+HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+HTTP_ACCEPT = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+    "application/pdf;q=0.9,*/*;q=0.8"
+)
+HTTP_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 
 
 def make_http_client() -> httpx.AsyncClient:
     """Factory for the shared async HTTP client.
 
-    Instantiated once in the FastAPI `lifespan` and injected into `extract`.
-    Configuration satisfies Story 1.2 AC9: identifiable User-Agent, 30 s total
-    timeout with 10 s connect timeout, follow redirects capped at 5 hops.
+    Browser-like User-Agent plus Accept / Accept-Language headers are required
+    to bypass bot-protection on common publisher sites (e.g. Cloudflare-fronted
+    nngroup.com returns 403 for a bare token UA). Timeouts (30 s total / 10 s
+    connect) and the 5-hop redirect cap from Story 1.2 AC9 are preserved.
     """
 
     return httpx.AsyncClient(
-        headers={"User-Agent": HTTP_USER_AGENT},
+        headers={
+            "User-Agent": HTTP_USER_AGENT,
+            "Accept": HTTP_ACCEPT,
+            "Accept-Language": HTTP_ACCEPT_LANGUAGE,
+        },
         timeout=httpx.Timeout(30.0, connect=10.0),
         follow_redirects=True,
         max_redirects=5,

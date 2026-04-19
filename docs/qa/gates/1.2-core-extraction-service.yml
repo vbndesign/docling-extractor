@@ -2,9 +2,9 @@ storyId: "1.2"
 storyTitle: "Core Docling Extraction Service"
 epic: "Epic 1 — Docling Extractor"
 branch: "feature/epic-1-docling-extractor"
-commitUnderReview: "uncommitted (working tree)"
+commitUnderReview: "uncommitted (working tree) — original gate + 2026-04-19 re-gate addendum after AC9 v1.5 revision"
 reviewer: "Quinn (@qa)"
-reviewedAt: "2026-04-19"
+reviewedAt: "2026-04-19 (initial), 2026-04-19 (re-gated for AC9 v1.5)"
 coderabbit:
   enabled: false
   reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
@@ -90,15 +90,25 @@ acceptance_criteria:
       `httpx.RequestError` to SourceFetchError. Grep confirmed zero
       `HTTPException` references in backend/.
   - id: AC9
-    requirement: "httpx.AsyncClient configured with UA, timeout, max_redirects=5"
+    requirement: >
+      httpx.AsyncClient configured with browser-compatible UA + Accept +
+      Accept-Language, 30s/10s timeout, max_redirects=5 (revised 2026-04-19,
+      Change Log v1.4/v1.5 — bare-token UA replaced after nngroup.com 403 incident)
     status: met
     evidence: >
-      `make_http_client()` builds the client with
-      `headers={"User-Agent": "docling-extractor/1.0"}`,
-      `httpx.Timeout(30.0, connect=10.0)`, `follow_redirects=True`,
-      `max_redirects=5`. Verified by test_make_http_client_uses_documented_config
-      (direct attribute inspection) and test_http_client_sends_user_agent
-      (header observed by MockTransport).
+      `make_http_client()` builds the client with headers = {User-Agent:
+      Mozilla/5.0 ... Chrome/120.0.0.0 Safari/537.36, Accept:
+      text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.9,*/*;q=0.8,
+      Accept-Language: en-US,en;q=0.9}, `httpx.Timeout(30.0, connect=10.0)`,
+      `follow_redirects=True`, `max_redirects=5`. Verified by
+      test_make_http_client_uses_documented_config (asserts UA starts with
+      Mozilla/5.0 and contains Chrome/, Accept contains text/html + application/pdf,
+      Accept-Language starts with en, plus all timeouts and redirect cap) and
+      test_http_client_sends_user_agent (MockTransport observes UA + Accept +
+      Accept-Language on an actual outbound request). Smoke test 2026-04-19:
+      `make_http_client()` fetched https://www.nngroup.com/articles/ai-agents-as-users/
+      with status=200 and 115,426-byte HTML body containing `<title`
+      (previously returned 403 with the v1.0 bare-token UA).
 
 quality_gate_checks:
   code_review:
@@ -106,7 +116,7 @@ quality_gate_checks:
     notes: >
       Clean module docstring declares the exception-boundary invariant.
       Public surface is narrow (`extract`, `make_http_client`, `HTTP_USER_AGENT`,
-      `PDF_MAGIC`). Private helpers (`_run_docling`, `_detect_url_kind`,
+      `HTTP_ACCEPT`, `HTTP_ACCEPT_LANGUAGE`, `PDF_MAGIC`). Private helpers (`_run_docling`, `_detect_url_kind`,
       `_fetch_bytes`, `_parse_html_meta`, `_is_url`) keep responsibilities
       sharp. PEP 604 union types throughout. `DocumentStream` + `io.BytesIO`
       used for URL paths so the service never writes to disk (honors
@@ -137,7 +147,8 @@ quality_gate_checks:
     notes: >
       Service receives all dependencies via DI (http_client, converter) —
       no globals. HTTP client constrains blast radius with max_redirects=5,
-      30s total timeout, 10s connect timeout, identifiable User-Agent.
+      30s total timeout, 10s connect timeout, and an explicit browser-compatible
+      UA + Accept headers (revised per AC9 v1.4/v1.5 — see re-gate addendum).
       Magic-byte validation before Docling invocation reduces surface for
       malformed-file exploits reaching the parser. No shell, no
       subprocess, no eval.
@@ -216,3 +227,42 @@ recommendation_next: >
   Carry the 3 low-severity observations forward: regex → html.parser in
   Story 1.3 if metadata surface grows; pytest warning filter in Story 1.6;
   TypeGuard refinement is purely cosmetic.
+
+re_gate_addendum:
+  - reGatedAt: "2026-04-19"
+    reviewer: "Quinn (@qa)"
+    verdict: PASS
+    trigger: >
+      @po revised AC9 (Change Log v1.5) after @dev's field change (Change
+      Log v1.4) replaced the bare-token `docling-extractor/1.0` User-Agent
+      with a Mozilla/Chrome-compatible UA + Accept/Accept-Language headers.
+      Revision was forced by 403 responses from Cloudflare-fronted publishers
+      (repro: https://www.nngroup.com/articles/ai-agents-as-users/).
+    what_changed_since_v1_0:
+      - "backend/docling_service.py: HTTP_USER_AGENT now Mozilla/Chrome; new constants HTTP_ACCEPT and HTTP_ACCEPT_LANGUAGE; make_http_client() sends all three."
+      - "tests/test_docling_service.py: test_make_http_client_uses_documented_config relaxed to assert UA shape (Mozilla/5.0 + Chrome/) and presence of Accept/Accept-Language; test_http_client_sends_user_agent extended to observe all three headers on MockTransport."
+      - "tests/conftest.py: make_test_http_client and install_http_client fixtures mirror the full production header set."
+    evidence_re_verified:
+      - name: "AC9 tests (targeted)"
+        command: "uv run pytest tests/test_docling_service.py::test_make_http_client_uses_documented_config tests/test_docling_service.py::test_http_client_sends_user_agent -v"
+        result: "2 passed in 9.23s"
+      - name: "Full suite (regression)"
+        command: "uv run pytest -x -q"
+        result: "78 passed (no regressions introduced by the UA change)"
+      - name: "Ruff lint"
+        command: "uv run ruff check backend/ tests/"
+        result: "All checks passed!"
+      - name: "Live 403-fix smoke test (out-of-band)"
+        command: "make_http_client().get('https://www.nngroup.com/articles/ai-agents-as-users/')"
+        result: "status=200, 115,426 bytes, text/html, <title> present"
+    security_re_assessment: >
+      The identification-via-UA aspect of the original S3 mitigation is lost
+      (publisher-side telemetry cannot distinguish us from generic Chrome
+      traffic). The blast-radius controls that actually mitigate S3 — 30s
+      total timeout, 10s connect timeout, 5-hop redirect cap, explicit
+      (non-empty) UA — remain intact. Net risk posture: unchanged for the
+      security properties we actually rely on; operational reliability
+      materially improved. Recommend a future story to re-introduce opt-in
+      identification via a custom `X-Extractor: docling-extractor/<version>`
+      header if publisher-side analytics become a requirement (non-blocking).
+    story_status: "Remains `Done`. No functional regression; revised AC9 fully met."
