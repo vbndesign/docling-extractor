@@ -71,14 +71,17 @@ as páginas perdidas.
 Do diretório raiz do projeto:
 
 ```bash
-# Com uv
-uv run uvicorn backend.main:app --host 127.0.0.1 --port 8000
+# Atalho: sobe o servidor e abre o navegador em http://127.0.0.1:8000
+uv run docling-serve
 
-# Ou com o venv ativado
-uvicorn backend.main:app --host 127.0.0.1 --port 8000
+# Acrescente --reload para auto-restart ao editar código
+uv run docling-serve --reload
+
+# Equivalente manual (sem abrir o navegador)
+uv run uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Abrir <http://127.0.0.1:8000>.
+Abrir <http://127.0.0.1:8000> (o `docling-serve` já abre automaticamente).
 
 > ⚠️ O default `--host 127.0.0.1` é localhost-only por segurança (não há
 > autenticação). Para expor na LAN, mudar explicitamente para
