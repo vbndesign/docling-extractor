@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Docling Source Converter</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    {# HTMX vendored (arch §7.3: local-first). Loaded synchronously so
+       window.htmx is defined before app.js (which uses defer) runs. #}
+    <script src="/static/htmx.min.js"></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="app-header__brand">
+        <div class="logo-mark">D</div>
+        <div>
+          <h1 class="app-header__title">Docling Source Converter</h1>
+          <p class="app-header__version">v1.0.0-local / SYSTEM_READY</p>
+        </div>
+      </div>
+
+      <div class="app-header__meta">
+        <div class="meta-block" data-health-pill>
+          <span class="meta-block__label">System Health</span>
+          <span class="meta-block__value">
+            <span class="status-dot is-pulsing" data-health-dot></span>
+            <span data-health-label>CHECKING</span>
+          </span>
+        </div>
+        <div class="meta-block meta-block--divided">
+          <span class="meta-block__label">Output Dir</span>
+          <span
+            class="meta-block__value meta-block__value--accent"
+            title="{{ output_dir }}"
+            >{{ output_dir }}</span
+          >
+        </div>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="section section--source">
+        <h2 class="section-header">Source Acquisition</h2>
+
+        <div class="section__fields">
+          {# ---------- URL form ---------- #}
+          <form
+            hx-post="/extract"
+            hx-target="#result"
+            hx-swap="innerHTML"
+            hx-indicator="#indicator"
+            hx-on::before-request="document.getElementById('result').setAttribute('aria-busy','true')"
+            hx-on::after-request="document.getElementById('result').setAttribute('aria-busy','false')"
+          >
+            <label class="field-label" for="url-input"
+              >Remote Source URL</label
+            >
+            <div class="form-row">
+              <div class="input-with-icon">
+                <span class="input-with-icon__icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.72"
+                    />
+                    <path
+                      d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                    />
+                  </svg>
+                </span>
+                <input
+                  type="url"
+                  id="url-input"
+                  name="url"
+                  class="input-with-icon__field"
+                  placeholder="https://example.com/document"
+                  autocomplete="off"
+                />
+              </div>
+              <button type="submit" class="btn-primary">Extract</button>
+            </div>
+          </form>
+
+          {# ---------- PDF dropzone ---------- #}
+          <div>
+            <label class="field-label" for="pdf-file-input"
+              >PDF Payload</label
+            >
+            <div
+              id="pdf-dropzone"
+              class="dropzone"
+              hx-encoding="multipart/form-data"
+              hx-post="/extract"
+              hx-trigger="submit"
+              hx-include="#pdf-file-input"
+              hx-target="#result"
+              hx-swap="innerHTML"
+              hx-indicator="#indicator"
+              hx-on::before-request="document.getElementById('result').setAttribute('aria-busy','true')"
+              hx-on::after-request="document.getElementById('result').setAttribute('aria-busy','false')"
+              tabindex="0"
+              role="button"
+              aria-label="Drop a PDF file here or click to browse"
+            >
+              <input
+                type="file"
+                id="pdf-file-input"
+                name="file"
+                accept=".pdf,application/pdf"
+                class="sr-only"
+                tabindex="-1"
+              />
+              <span class="dropzone__icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              </span>
+              <p class="dropzone__label">
+                Drag &amp; drop PDF here or click to browse
+              </p>
+              <p class="dropzone__hint">Single Document Buffer / 50 MB MAX</p>
+            </div>
+          </div>
+
+          {# ---------- local_path fallback (AC2c, AC8) ---------- #}
+          <form
+            hx-post="/extract"
+            hx-target="#result"
+            hx-swap="innerHTML"
+            hx-indicator="#indicator"
+            hx-on::before-request="document.getElementById('result').setAttribute('aria-busy','true')"
+            hx-on::after-request="document.getElementById('result').setAttribute('aria-busy','false')"
+          >
+            <label class="field-label" for="path-input"
+              >…or paste the absolute path to a local file</label
+            >
+            <div class="form-row">
+              <div class="input-with-icon">
+                <span class="input-with-icon__icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                    />
+                  </svg>
+                </span>
+                <input
+                  type="text"
+                  id="path-input"
+                  name="local_path"
+                  class="input-with-icon__field"
+                  placeholder="C:\Users\you\Documents\paper.pdf"
+                  autocomplete="off"
+                />
+              </div>
+              <button type="submit" class="btn-primary">Extract</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="section section--output">
+        <h2 class="section-header">Output Pipeline</h2>
+
+        <div id="indicator" class="processing-card" aria-hidden="true">
+          <div class="loader-spin" aria-hidden="true"></div>
+          <p class="processing-card__label">Ingestion Active</p>
+          <p class="processing-card__helper">
+            Processing source with Docling. This may take up to 30 seconds for
+            large PDFs.
+          </p>
+        </div>
+
+        <div id="result" aria-live="polite" aria-busy="false">
+          <div class="empty-state">
+            <span class="empty-state__icon" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+            </span>
+            <p class="empty-state__label">Awaiting payload input signal</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer-pill-wrapper">
+      <div class="footer-pill">
+        Running on Localhost • Obsidian Zettelkasten Framework
+      </div>
+    </footer>
+  </body>
+</html>

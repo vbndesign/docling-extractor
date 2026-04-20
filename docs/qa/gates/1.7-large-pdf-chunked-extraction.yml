@@ -1,0 +1,236 @@
+schema: 1
+story: "1.7"
+storyTitle: "Large-PDF Chunked Extraction & Partial-Success Visibility"
+epic: "Epic 1 — Docling Extractor"
+branch: "dev"
+commitUnderReview: "uncommitted working tree on dev (16 modified files, 4 new — Story 1.7 full scope + OCR hotfix v1.3)"
+reviewer: "Quinn"
+updated: "2026-04-20T12:00:00Z"
+coderabbit:
+  enabled: false
+  reason: "coderabbit_integration disabled in core-config.yaml; manual review only"
+
+gate: PASS
+status_reason: >
+  All 9 ACs met. AC1/AC7a/AC7e (chunker splits and small-PDF bypass)
+  covered by dedicated unit tests. AC2 (≥90% char-ratio on large PDFs)
+  exercised by `test_extract_large_pdf_succeeds_with_full_coverage`
+  against the synthetic `large_text.pdf` fixture (104 pages). AC3/AC4/AC5
+  (partial aggregation, frontmatter emission, HTMX warning) covered by
+  three integration tests against both JSON and HTML branches. AC6
+  (timeout 60→600) applied in Settings. AC8 (no regression) validated —
+  97/97 tests pass in 9.55 s warm run. AC9 (<60 s suite, lint) green.
+  Crucially, empirical validation against the author's real 104-page PDF
+  (Task 10 first half) now confirms the design works end-to-end:
+  144 800 body chars in the generated `.md` vs. 145 046 chars from the
+  @dev D1/D2 probes (99.83% match); frontmatter omits `partial:` (FR4
+  compliant); bug-era output was 23 325 chars, so the hotfix restores
+  6.21× more content.
+
+  The hotfix in Change Log v1.3 (disabling `do_ocr` at lifespan
+  instantiation) is surgical, well-justified inline, and closes a real
+  gap: the Story 1.7 Dev Notes asserted `do_ocr` was "irrelevant" to the
+  heap-leak root cause — which is true — but omitted that the Docling
+  default `do_ocr=True` dominates wall-clock time on native-text PDFs,
+  turning the chunked path into a 504 even with the new 600 s timeout.
+  Aligning the runtime with the product stance already advertised in the
+  README ("v1 has no OCR") was the correct call. Scanned-PDF guard
+  (`_guard_non_empty_markdown` → 422 with OCR hint) remains covered by
+  `test_extract_scanned_pdf_maps_to_422_with_ocr_hint`.
+
+top_issues:
+  - id: "DOC-001"
+    severity: low
+    file: "docs/stories/1.7.large-pdf-chunked-extraction.md"
+    finding: >
+      The story's Dev Notes (Previous Story Insights) state that
+      `do_ocr` is "irrelevant for this problem. Don't waste time there."
+      That guidance was scoped to the heap-leak investigation and is
+      correct in that context — but Completion Note #10 now documents
+      that `do_ocr` is in fact the dominant factor for wall-clock time
+      on native-text PDFs, driving 504s even with chunking in place.
+      Readers who only skim Dev Notes (not Completion Notes) may
+      misapply the original guidance in future work.
+    suggested_action: >
+      Keep as-is for this story (Completion Note #10 is the canonical
+      record). If a future story touches Docling pipeline knobs,
+      consider a one-line pointer in the Dev Notes of that story that
+      "do_ocr affects wall-clock time but not heap retention — see
+      Story 1.7 Completion Note #10."
+
+  - id: "TEST-001"
+    severity: low
+    file: "backend/main.py"
+    finding: >
+      The `do_ocr=False` wiring in lifespan is not covered by a unit
+      test asserting that `app.state.converter` was instantiated with
+      `PdfPipelineOptions(do_ocr=False)`. A silent regression to the
+      Docling default (or a future refactor swapping `PdfFormatOption`
+      for a different binding) would not be caught by the existing
+      suite until a user submits a real 100-page PDF and reports a 504
+      again. The scanned-PDF test covers the product-facing contract
+      (422 with OCR hint) but not the performance contract.
+    suggested_action: >
+      Optional: add a unit test under `tests/test_endpoints.py` or a
+      new `tests/test_lifespan.py` that asserts, during app startup,
+      the active converter's PDF pipeline options have `do_ocr=False`.
+      Low priority — the inline comment in `main.py:62–67` documents
+      the intent clearly, and the next user-facing regression would
+      be caught in manual E2E. Register as tech debt if not addressed
+      in Story 1.8.
+
+  - id: "PERF-001"
+    severity: low
+    file: "tests/test_endpoints.py"
+    finding: >
+      First cold run of the full suite clocks ~73 s on Python 3.14.0
+      due to pytest_asyncio deprecation-warning machinery (~4133
+      warnings logged). Warm runs are 9–14 s (well within AC9). The
+      AC9 budget is about real test execution, not Python startup
+      theatre — so not a violation — but contributors running the
+      suite for the first time after `uv sync` may be confused by
+      the apparent 5× slowdown.
+    suggested_action: >
+      Either pin `pytest-asyncio` to a release compatible with Python
+      3.14 without the deprecation spam, or add a short note in
+      `README.md` under "Testes" that the first cold run is slower
+      due to Python import caching. Non-blocking.
+
+acceptance_criteria:
+  AC1_chunked_extraction:
+    status: met
+    evidence: >
+      `_chunk_pdf_bytes` + `_convert_pdf_bytes` in `backend/docling_service.py`;
+      `test_chunk_pdf_splits_into_expected_sizes` and
+      `test_large_pdf_routes_through_chunker` pass.
+  AC2_no_content_regression:
+    status: met
+    evidence: >
+      `test_extract_large_pdf_succeeds_with_full_coverage` asserts ≥90%
+      against `large_text.baseline.json`. Empirical E2E on author's real
+      104-page PDF: 144 800 chars (99.83% match vs D1/D2 @dev probes
+      baseline of 145 046 chars).
+  AC3_partial_aggregation:
+    status: met
+    evidence: >
+      `test_extract_partial_pdf_returns_200_with_warning` and
+      `test_extract_pdf_exceeds_failure_threshold_returns_422` cover
+      both sub-AC branches. Chunk-offset arithmetic verified by
+      `test_large_pdf_aggregates_failed_pages_with_chunk_offset`.
+  AC4_frontmatter_partial:
+    status: met
+    evidence: >
+      `test_build_emits_partial_when_flagged` + companion tests in
+      `tests/test_frontmatter.py`. Empirical: the author's 104-page
+      `.md` correctly OMITS `partial:` since conversion was clean
+      (FR4 / arch §5.2 compliant).
+  AC5_ui_visibility:
+    status: met
+    evidence: >
+      `test_extract_partial_pdf_renders_htmx_warning_block` covers
+      HTMX; JSON branch adds `partial: bool` + `failed_pages: list[int]`
+      unconditionally (contract-stable).
+  AC6_timeout_bump:
+    status: met
+    evidence: >
+      `backend/config.py` default changed to 600; `.env.example`
+      updated; README "Troubleshooting" section documents.
+  AC7_automated_tests:
+    status: met
+    evidence: >
+      All five sub-ACs (a–e) implemented per Task 8. Total 13 new
+      tests for Story 1.7.
+  AC8_regression:
+    status: met
+    evidence: >
+      97/97 tests pass (84 pre-existing from Stories 1.1–1.6 + 13
+      new). No modifications to pre-existing test semantics — only
+      mock signatures widened to accept the new 3-tuple `_run_docling`
+      return.
+  AC9_lint_performance:
+    status: met
+    evidence: >
+      `ruff check` + `ruff format --check` both clean. Suite warm-run
+      9.55 s (cold run 73 s due to Python 3.14 import overhead —
+      PERF-001 below, non-blocking).
+
+hotfix_v1.3_review:
+  scope: >
+    `backend/main.py` lifespan: instantiate `DocumentConverter` with
+    `PdfPipelineOptions(do_ocr=False)` via `PdfFormatOption`.
+    `tests/conftest.py`: `_DummyConverterForApp.__init__` now accepts
+    `*args, **kwargs` to tolerate the new call shape.
+  assessment: PASS
+  findings:
+    - Fix is surgical (2 files, ~10 LOC net) and correctly scoped.
+    - Inline comment in `main.py:62–67` explains the why with evidence
+      references (README alignment, Story 1.7 D1/D2 probe baseline).
+    - Completion Note #10 and Change Log v1.3 in the story file are
+      accurate and link cause to effect.
+    - Scanned-PDF 422 contract preserved and still green
+      (`test_extract_scanned_pdf_maps_to_422_with_ocr_hint`).
+    - No test coverage drop — the tightened conftest dummy accepts
+      arbitrary kwargs, keeping the sentinel contract intact.
+
+risk_profile:
+  before_review: low
+  residual:
+    - risk: "Silent regression to Docling default `do_ocr=True`"
+      probability: low
+      impact: high
+      mitigation: >
+        Inline comment + Completion Note #10 flag it. TEST-001 above
+        optionally adds a guard test; recommended but non-blocking.
+    - risk: "Python 3.14 pytest-asyncio deprecation noise masking real
+      failures in CI"
+      probability: low
+      impact: low
+      mitigation: >
+        All 97 tests explicitly asserted; warnings do not cause
+        failures. PERF-001 optionally addresses UX.
+
+nfr_assessment:
+  performance:
+    status: met
+    evidence: >
+      Empirical: 104-page PDF end-to-end in ~3 min on user's machine,
+      well under the 600 s timeout. Matches D1/D2 baseline.
+  security:
+    status: met
+    evidence: >
+      No new attack surface — change is internal converter config.
+      `_DummyConverterForApp` kwargs-swallow is test-only.
+  reliability:
+    status: met
+    evidence: >
+      Chunking preserves content on heap-bounded pypdfium2 path;
+      scanned-PDF guard unchanged; partial-success aggregation
+      correctly threshold-gated at `max_failed_pages_ratio`.
+  maintainability:
+    status: met
+    evidence: >
+      Single-purpose lifespan config change, three explicit docling
+      imports. Justification captured inline + in story. Ruff clean.
+
+recommendations:
+  must_fix: []
+  should_consider:
+    - >
+      DOC-001: future stories touching Docling pipeline should
+      reference Story 1.7 Completion Note #10 if they re-evaluate
+      `do_ocr` or related knobs.
+  nice_to_have:
+    - >
+      TEST-001: lifespan invariant test asserting `do_ocr=False` on
+      `app.state.converter` — register as tech debt candidate.
+    - >
+      PERF-001: investigate pytest-asyncio deprecation noise on
+      Python 3.14, or document the cold-run cost in README "Testes".
+
+next_steps:
+  - Author executes manual E2E on a second real PDF to exercise the
+    scanned-PDF path (currently only mock-tested) — recommended before
+    @devops push, not blocking.
+  - Story 1.7 status: `Ready for Review` → proceed to `Done` once
+    @devops completes push. No @dev rework required.
+  - Gate ready to hand off to @devops (`@devops *push`).
