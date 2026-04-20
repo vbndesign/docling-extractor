@@ -39,11 +39,26 @@ class SourceDescriptor:
 
 @dataclass(frozen=True)
 class ExtractionResult:
-    """Output of `docling_service.extract`."""
+    """Output of `docling_service.extract`.
+
+    ``partial`` + ``failed_pages`` were added in Story 1.7 to describe
+    PDF chunked conversions where a subset of pages failed. For the
+    regular (single-call) path and for HTML sources, ``partial`` is
+    ``False`` and ``failed_pages`` is ``()``.
+
+    ``total_pages`` reports the source PDF's page count when known; it
+    stays ``None`` for non-PDF and for legacy/test inputs that never
+    passed through the chunker probe. Consumers that render
+    "X of Y pages failed" should fall back to ``len(failed_pages)``
+    when ``total_pages`` is ``None``.
+    """
 
     markdown: str
     metadata: ExtractedMetadata
     source: SourceDescriptor
+    partial: bool = False
+    failed_pages: tuple[int, ...] = ()
+    total_pages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -52,3 +67,6 @@ class SaveResult:
 
     output_path: Path
     filename: str
+    partial: bool = False
+    failed_pages: tuple[int, ...] = ()
+    total_pages: int | None = None

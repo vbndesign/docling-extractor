@@ -117,12 +117,28 @@ def test_settings(tmp_path: Path):
         output_dir=tmp_path / "out",
         max_upload_mb=1,
         request_timeout_seconds=5,
+        pdf_chunk_size=10,
+        pdf_chunk_threshold=20,
+        max_failed_pages_ratio=0.10,
     )
 
 
-def _default_run_docling_stub(markdown: str, metadata: dict):
+def _default_run_docling_stub(
+    markdown: str,
+    metadata: dict,
+    failed_pages: list[int] | None = None,
+):
+    """Factory for a `_run_docling` replacement returning the Story 1.7 3-tuple.
+
+    The tuple grew a ``failed_pages`` slot to let the service aggregate
+    per-chunk failures (AC3/AC5); tests that don't care about partial
+    behavior pass ``failed_pages=None`` and get an empty list.
+    """
+
+    pages = list(failed_pages or [])
+
     def _stub(source, *, converter):  # noqa: ARG001
-        return markdown, dict(metadata)
+        return markdown, dict(metadata), list(pages)
 
     return _stub
 
@@ -148,7 +164,11 @@ def test_client(
     from backend.config import get_settings
 
     class _DummyConverterForApp:
-        pass
+        def __init__(self, *args, **kwargs):
+            # Swallow whatever `DocumentConverter(...)` is called with in
+            # lifespan — keeps this a pure sentinel regardless of upstream
+            # kwargs (e.g. `format_options` added for `do_ocr=False`).
+            pass
 
     monkeypatch.setattr(backend_main, "DocumentConverter", _DummyConverterForApp)
 

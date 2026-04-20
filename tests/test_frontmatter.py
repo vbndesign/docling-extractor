@@ -148,3 +148,60 @@ def test_build_wraps_in_triple_dashes(fixed_now, html_source) -> None:
     assert lines[0] == "---"
     assert lines[-1] == "---"
     assert rendered.count("---") == 2
+
+
+# ---- Story 1.7 — Partial-success frontmatter keys -------------------------
+
+
+def test_build_emits_partial_and_failed_pages_when_partial_true(fixed_now, html_source) -> None:
+    """AC4 — `partial: true` + ordered `failed_pages` appear after `generated_by`."""
+
+    rendered = build(
+        ExtractedMetadata(),
+        html_source,
+        fixed_now,
+        partial_info=(True, [13, 14, 45]),
+    )
+    parsed = yaml.safe_load(_strip_delimiters(rendered))
+
+    assert parsed["partial"] is True
+    assert parsed["failed_pages"] == [13, 14, 45]
+
+    # Key order matters for human-readability: integrity info MUST come right
+    # after `generated_by` (arch §5.2) and BEFORE optional metadata.
+    keys = list(parsed.keys())
+    assert keys.index("partial") == keys.index("generated_by") + 1
+    assert keys.index("failed_pages") == keys.index("partial") + 1
+
+
+def test_build_omits_partial_keys_when_partial_false(fixed_now, html_source) -> None:
+    """AC4 / FR4 — `partial: false` and `failed_pages: []` MUST NOT appear."""
+
+    rendered = build(
+        ExtractedMetadata(),
+        html_source,
+        fixed_now,
+        partial_info=(False, []),
+    )
+
+    assert "partial:" not in rendered
+    assert "failed_pages:" not in rendered
+
+
+def test_build_defaults_match_clean_conversion(fixed_now, html_source) -> None:
+    """Default `partial_info` MUST behave identically to `(False, [])`.
+
+    This is the BC guard for callers that existed before Story 1.7 — they
+    still pass only `(metadata, source, now)` and must continue to get the
+    same output with no partial keys.
+    """
+
+    default_rendered = build(ExtractedMetadata(), html_source, fixed_now)
+    explicit_rendered = build(
+        ExtractedMetadata(),
+        html_source,
+        fixed_now,
+        partial_info=(False, []),
+    )
+
+    assert default_rendered == explicit_rendered

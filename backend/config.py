@@ -26,13 +26,19 @@ class Settings:
     output_dir: Path
     max_upload_mb: int
     request_timeout_seconds: int
+    pdf_chunk_size: int
+    pdf_chunk_threshold: int
+    max_failed_pages_ratio: float
 
 
 def _load_settings() -> Settings:
     return Settings(
         output_dir=Path(os.environ.get("OUTPUT_DIR", "./output")),
         max_upload_mb=int(os.environ.get("MAX_UPLOAD_MB", "50")),
-        request_timeout_seconds=int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "60")),
+        request_timeout_seconds=int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "600")),
+        pdf_chunk_size=int(os.environ.get("PDF_CHUNK_SIZE", "10")),
+        pdf_chunk_threshold=int(os.environ.get("PDF_CHUNK_THRESHOLD", "20")),
+        max_failed_pages_ratio=float(os.environ.get("MAX_FAILED_PAGES_RATIO", "0.10")),
     )
 
 

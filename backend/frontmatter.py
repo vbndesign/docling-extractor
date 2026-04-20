@@ -14,10 +14,16 @@ are *omitted entirely* (no ``null``, no empty string, no placeholder).
 
 AC4 forbidden keys (``title``, ``source_type``, ``domain``,
 ``concepts_extracted``) are never produced by this module.
+
+Story 1.7 addition: ``partial_info=(True, (p1, p2, ...))`` inserts
+``partial: true`` + ``failed_pages: [...]`` right after ``generated_by``.
+When ``partial=False`` those keys are omitted entirely (FR4 / arch §5.2
+"omissão > placeholder").
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +39,8 @@ def build(
     metadata: ExtractedMetadata,
     source: SourceDescriptor,
     now: datetime,
+    *,
+    partial_info: tuple[bool, Iterable[int]] = (False, ()),
 ) -> str:
     """Render the frontmatter block as a string wrapped in ``---`` delimiters.
 
@@ -40,6 +48,12 @@ def build(
     is the caller's responsibility (Story 1.4 wires it from a UTC-localized
     clock). The ``created`` field uses ``now.date()`` so it tracks the
     operator's local day.
+
+    ``partial_info`` (Story 1.7) is a ``(partial, failed_pages)`` tuple.
+    When ``partial=True``, the YAML carries ``partial: true`` + an ordered
+    ``failed_pages`` list inserted **between** ``generated_by`` and the
+    optional metadata keys so integrity information sits at the top of the
+    file (most useful diagnostic when opening a generated ``.md``).
     """
 
     payload: dict[str, Any] = {
@@ -49,6 +63,11 @@ def build(
         "location": source.location,
         "generated_by": GENERATED_BY,
     }
+
+    partial, failed_pages = partial_info
+    if partial:
+        payload["partial"] = True
+        payload["failed_pages"] = list(failed_pages)
 
     if metadata.source_title is not None:
         payload["source_title"] = metadata.source_title

@@ -22,7 +22,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -57,7 +59,18 @@ class _NamedBytesIO(io.BytesIO):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.converter = DocumentConverter()
+    # v1 is a no-OCR tool (README / error catalog): scanned PDFs return 422.
+    # Docling defaults `do_ocr=True`, which makes RapidOCR run on every page
+    # even for PDFs with native text — ~5–10x slower on CPU and the direct
+    # cause of 504s on 100-page PDFs under the Story 1.7 timeout. Disabling
+    # it here aligns the runtime with the product stance and matches what
+    # the Story 1.7 probes (D1/D2) measured.
+    pdf_pipeline_options = PdfPipelineOptions(do_ocr=False)
+    app.state.converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options),
+        }
+    )
     app.state.http_client = make_http_client()
     app.state.templates = Jinja2Templates(directory=str(FRONTEND_DIR / "templates"))
     try:
@@ -120,7 +133,7 @@ async def _run_pipeline(
     *,
     http_client: HttpClient,
     converter: DocumentConverter,
-    output_dir: Path,
+    settings: Settings,
 ) -> SaveResult:
     """Orchestrate extract → build → save for a single request.
 
@@ -128,13 +141,37 @@ async def _run_pipeline(
     client; the pure CPU/IO stages (`build` + `save`) are offloaded to the
     default threadpool so the event loop stays responsive even on large
     files (arch §R1).
+
+    Story 1.7: when ``er.partial`` is true (chunked PDF with some failed
+    pages below ``MAX_FAILED_PAGES_RATIO``), propagate ``partial`` +
+    ``failed_pages`` both into the frontmatter YAML (for the ``.md`` file
+    on disk) and into the ``SaveResult`` (for the API response / HTMX
+    template). Total pages flow through too so the UI can say "N of M
+    pages failed" without recomputing.
     """
 
-    er: ExtractionResult = await extract(source, http_client=http_client, converter=converter)
+    er: ExtractionResult = await extract(
+        source,
+        http_client=http_client,
+        converter=converter,
+        settings=settings,
+    )
 
     def _persist() -> SaveResult:
-        fm = build(er.metadata, er.source, now=datetime.now(tz=UTC))
-        return save(fm, er.markdown, er.metadata, er.source, output_dir)
+        fm = build(
+            er.metadata,
+            er.source,
+            now=datetime.now(tz=UTC),
+            partial_info=(er.partial, er.failed_pages),
+        )
+        raw = save(fm, er.markdown, er.metadata, er.source, settings.output_dir)
+        return SaveResult(
+            output_path=raw.output_path,
+            filename=raw.filename,
+            partial=er.partial,
+            failed_pages=er.failed_pages,
+            total_pages=er.total_pages,
+        )
 
     return await asyncio.to_thread(_persist)
 
@@ -184,7 +221,7 @@ async def extract_endpoint(
                 source,
                 http_client=request.app.state.http_client,
                 converter=request.app.state.converter,
-                output_dir=settings.output_dir,
+                settings=settings,
             ),
             timeout=settings.request_timeout_seconds,
         )
@@ -206,5 +243,12 @@ async def extract_endpoint(
             "status": "ok",
             "output_path": str(save_result.output_path),
             "filename": save_result.filename,
+            # Story 1.7: partial/failed_pages are always present in the
+            # JSON envelope (unlike the frontmatter, which omits them on
+            # clean conversions). API contract vs. file-on-disk contract
+            # intentionally differ — see arch §5.2 vs §7.2.
+            "partial": save_result.partial,
+            "failed_pages": list(save_result.failed_pages),
+            "total_pages": save_result.total_pages,
         },
     )

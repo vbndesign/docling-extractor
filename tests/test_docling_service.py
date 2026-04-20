@@ -11,12 +11,14 @@ import io
 from pathlib import Path
 
 import httpx
+import pypdfium2 as pdfium
 import pytest
 
 from backend import docling_service
 from backend.docling_service import (
     HTTP_IMPERSONATE,
     HTTP_USER_AGENT,
+    _chunk_pdf_bytes,
     extract,
     make_http_client,
 )
@@ -26,9 +28,18 @@ from backend.models import ExtractionResult
 # ---- Helpers ---------------------------------------------------------------
 
 
-def _patch_run_docling(monkeypatch: pytest.MonkeyPatch, markdown: str, metadata: dict):
+def _patch_run_docling(
+    monkeypatch: pytest.MonkeyPatch,
+    markdown: str,
+    metadata: dict,
+    failed_pages: list[int] | None = None,
+):
+    """Monkeypatch ``_run_docling`` to return the Story 1.7 3-tuple shape."""
+
+    pages = list(failed_pages or [])
+
     def _stub(_source, *, converter):  # noqa: ARG001 — signature match
-        return markdown, dict(metadata)
+        return markdown, dict(metadata), list(pages)
 
     monkeypatch.setattr(docling_service, "_run_docling", _stub)
 
@@ -200,6 +211,8 @@ async def test_extract_corrupted_pdf_raises_conversion_error(
     def _boom(_source, *, converter):  # noqa: ARG001
         raise ConversionError("Docling failed: malformed PDF")
 
+    # Patch both _run_docling (HTML path) and _pdf_page_count (PDF path uses
+    # the chunker probe to decide single-vs-chunked before calling Docling).
     monkeypatch.setattr(docling_service, "_run_docling", _boom)
 
     async with make_test_http_client(lambda r: httpx.Response(500)) as client:
@@ -325,6 +338,259 @@ def test_make_http_client_uses_documented_config():
     finally:
         # AsyncSession.close() is async; the constructor merely allocated state.
         pass
+
+
+# ---- Story 1.7 — Chunked PDF extraction -----------------------------------
+
+
+def _build_synthetic_pdf(num_pages: int) -> bytes:
+    """Generate a tiny in-memory PDF with `num_pages` text-only pages.
+
+    Uses reportlab (a dev-only dep) so chunker tests remain self-contained
+    and do NOT commit yet another fixture PDF. The content is irrelevant;
+    only the page count matters for AC7a/AC7e.
+    """
+
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=LETTER)
+    c.setFont("Helvetica", 10)
+    for page_idx in range(num_pages):
+        c.drawString(72, 720, f"synthetic page {page_idx + 1} of {num_pages}")
+        c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _pdf_pages(data: bytes) -> int:
+    doc = pdfium.PdfDocument(io.BytesIO(data))
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+def test_chunk_pdf_splits_into_expected_sizes():
+    """AC7a — 25-page PDF chunked at 10 yields 3 sub-PDFs with 10, 10, 5 pages.
+
+    Uses reportlab to synthesize the source PDF in-memory (not committed);
+    each chunk is reopened via pypdfium2 to verify its own page count and
+    that the sum equals the original (no pages dropped or duplicated).
+    """
+
+    data = _build_synthetic_pdf(25)
+    chunks = _chunk_pdf_bytes(data, 10)
+
+    assert len(chunks) == 3
+    page_counts = [_pdf_pages(chunk) for chunk in chunks]
+    assert page_counts == [10, 10, 5]
+    assert sum(page_counts) == 25
+
+
+def test_chunk_pdf_exact_multiple_splits_evenly():
+    """Edge: when total is a clean multiple of chunk_size, no short tail chunk."""
+
+    data = _build_synthetic_pdf(20)
+    chunks = _chunk_pdf_bytes(data, 10)
+
+    assert len(chunks) == 2
+    assert [_pdf_pages(c) for c in chunks] == [10, 10]
+
+
+def test_chunk_pdf_rejects_non_positive_chunk_size():
+    data = _build_synthetic_pdf(5)
+    with pytest.raises(InvalidInputError):
+        _chunk_pdf_bytes(data, 0)
+
+
+@pytest.mark.asyncio
+async def test_small_pdf_bypasses_chunking(
+    tmp_path, make_test_http_client, dummy_converter, monkeypatch
+):
+    """AC7e — PDFs with pages <= pdf_chunk_threshold skip the chunker entirely.
+
+    Monkeypatches `_chunk_pdf_bytes` with a spy and asserts it was never
+    invoked for a 5-page PDF against the default threshold of 20. The spy
+    also raises if called, so a regression that routes small PDFs through
+    chunking would fail loudly, not silently.
+    """
+
+    from backend.config import Settings
+
+    _patch_run_docling(monkeypatch, markdown="# Small\n\nBody.\n", metadata={})
+
+    call_count = 0
+
+    def spy_chunker(data: bytes, chunk_size: int):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        raise AssertionError("chunker must not be invoked for small PDFs")
+
+    monkeypatch.setattr(docling_service, "_chunk_pdf_bytes", spy_chunker)
+
+    pdf_bytes = _build_synthetic_pdf(5)
+    pdf_path = tmp_path / "small.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    settings = Settings(
+        output_dir=tmp_path,
+        max_upload_mb=10,
+        request_timeout_seconds=5,
+        pdf_chunk_size=10,
+        pdf_chunk_threshold=20,
+        max_failed_pages_ratio=0.10,
+    )
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        result = await extract(
+            pdf_path,
+            http_client=client,
+            converter=dummy_converter,
+            settings=settings,
+        )
+
+    assert call_count == 0
+    assert result.partial is False
+    assert result.failed_pages == ()
+    assert result.total_pages == 5
+
+
+@pytest.mark.asyncio
+async def test_large_pdf_routes_through_chunker(
+    tmp_path, make_test_http_client, dummy_converter, monkeypatch
+):
+    """Complement of AC7e — crossing the threshold MUST trigger chunking.
+
+    Uses a 25-page PDF with threshold=20, chunk_size=10 → 3 chunks, so
+    `_run_docling` is called 3 times (once per chunk) and the aggregated
+    markdown concatenates the 3 stubbed outputs in order.
+    """
+
+    from backend.config import Settings
+
+    call_log: list[str] = []
+
+    def stub(source_for_docling, *, converter):  # noqa: ARG001
+        call_log.append(source_for_docling.name)
+        idx = len(call_log)
+        return f"### chunk {idx}", {}, []
+
+    monkeypatch.setattr(docling_service, "_run_docling", stub)
+
+    pdf_bytes = _build_synthetic_pdf(25)
+    pdf_path = tmp_path / "big.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    settings = Settings(
+        output_dir=tmp_path,
+        max_upload_mb=10,
+        request_timeout_seconds=5,
+        pdf_chunk_size=10,
+        pdf_chunk_threshold=20,
+        max_failed_pages_ratio=0.10,
+    )
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        result = await extract(
+            pdf_path,
+            http_client=client,
+            converter=dummy_converter,
+            settings=settings,
+        )
+
+    assert len(call_log) == 3
+    assert all("#chunk" in name for name in call_log)
+    assert result.markdown == "### chunk 1\n\n### chunk 2\n\n### chunk 3"
+    assert result.total_pages == 25
+    assert result.partial is False
+
+
+@pytest.mark.asyncio
+async def test_large_pdf_aggregates_failed_pages_with_chunk_offset(
+    tmp_path, make_test_http_client, dummy_converter, monkeypatch
+):
+    """AC3a — failed page numbers are offset by chunk index.
+
+    Docling reports `page_no` relative to the CHUNK it received (1-based).
+    The service must translate to document-wide numbers. Here chunk 2
+    reports pages 3 and 4 as failed — globally those are pages 13 and 14.
+    Below 10% threshold (2/30 ≈ 6.7%), so response is partial=true, 200 OK.
+    """
+
+    from backend.config import Settings
+
+    def stub(source_for_docling, *, converter):  # noqa: ARG001
+        name = source_for_docling.name
+        failed = [3, 4] if "#chunk002" in name else []
+        return "# content", {}, failed
+
+    monkeypatch.setattr(docling_service, "_run_docling", stub)
+
+    pdf_bytes = _build_synthetic_pdf(30)
+    pdf_path = tmp_path / "partial.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    settings = Settings(
+        output_dir=tmp_path,
+        max_upload_mb=10,
+        request_timeout_seconds=5,
+        pdf_chunk_size=10,
+        pdf_chunk_threshold=20,
+        max_failed_pages_ratio=0.10,
+    )
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        result = await extract(
+            pdf_path,
+            http_client=client,
+            converter=dummy_converter,
+            settings=settings,
+        )
+
+    assert result.partial is True
+    assert result.failed_pages == (13, 14)
+    assert result.total_pages == 30
+
+
+@pytest.mark.asyncio
+async def test_large_pdf_rejects_when_failure_ratio_exceeded(
+    tmp_path, make_test_http_client, dummy_converter, monkeypatch
+):
+    """AC3b — when >MAX_FAILED_PAGES_RATIO pages fail, raise ConversionError."""
+
+    from backend.config import Settings
+
+    def stub(source_for_docling, *, converter):  # noqa: ARG001
+        # Every chunk fails its first 5 pages → 15/30 = 50% failure rate.
+        return "# content", {}, [1, 2, 3, 4, 5]
+
+    monkeypatch.setattr(docling_service, "_run_docling", stub)
+
+    pdf_bytes = _build_synthetic_pdf(30)
+    pdf_path = tmp_path / "burned.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    settings = Settings(
+        output_dir=tmp_path,
+        max_upload_mb=10,
+        request_timeout_seconds=5,
+        pdf_chunk_size=10,
+        pdf_chunk_threshold=20,
+        max_failed_pages_ratio=0.10,
+    )
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        with pytest.raises(ConversionError) as excinfo:
+            await extract(
+                pdf_path,
+                http_client=client,
+                converter=dummy_converter,
+                settings=settings,
+            )
+
+    assert "over threshold" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

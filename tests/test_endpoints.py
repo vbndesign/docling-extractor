@@ -14,10 +14,13 @@ in milliseconds. Cover:
 
 from __future__ import annotations
 
+import io
+import json
 import time
 from pathlib import Path
 
 import httpx
+import pypdfium2 as pdfium
 import pytest
 
 HTML_BODY = (
@@ -225,12 +228,15 @@ def test_extract_conversion_timeout_maps_to_504(
         output_dir=test_settings.output_dir,
         max_upload_mb=test_settings.max_upload_mb,
         request_timeout_seconds=1,
+        pdf_chunk_size=test_settings.pdf_chunk_size,
+        pdf_chunk_threshold=test_settings.pdf_chunk_threshold,
+        max_failed_pages_ratio=test_settings.max_failed_pages_ratio,
     )
     test_client.app.dependency_overrides[get_settings] = lambda: tight
 
     def slow(source, *, converter):  # noqa: ARG001
         time.sleep(2)
-        return "# x\n", {}
+        return "# x\n", {}, []
 
     set_run_docling(slow)
 
@@ -353,7 +359,7 @@ def test_extract_empty_html_maps_to_422(test_client, install_http_client, set_ru
         return httpx.Response(200, content=empty_shell, headers={"content-type": "text/html"})
 
     install_http_client(handler)
-    set_run_docling(lambda source, *, converter: ("", {}))  # noqa: ARG005
+    set_run_docling(lambda source, *, converter: ("", {}, []))  # noqa: ARG005
 
     response = test_client.post("/extract", data={"url": "https://spa.example.com/"})
     assert response.status_code == 422, response.text
@@ -367,7 +373,7 @@ def test_extract_scanned_pdf_maps_to_422_with_ocr_hint(test_client, set_run_docl
     # PDF with zero text runs. _run_docling is stubbed to return empty
     # markdown (simulating no OCR), and the service must reject with an
     # OCR-specific message rather than producing a .md with an empty body.
-    set_run_docling(lambda source, *, converter: ("", {}))  # noqa: ARG005
+    set_run_docling(lambda source, *, converter: ("", {}, []))  # noqa: ARG005
 
     scanned = fixtures_dir / "scanned.pdf"
     with scanned.open("rb") as fh:
@@ -392,3 +398,187 @@ def test_extract_non_pdf_file_maps_to_400(test_client):
     body = response.json()
     assert body["code"] == "INVALID_INPUT"
     assert "PDF" in body["message"]
+
+
+# --------------------------------------------------------------------------- #
+# STORY 1.7 — Chunked PDF extraction (AC7b, AC7c, AC7d)
+# --------------------------------------------------------------------------- #
+
+
+def _native_text_from_chunk(data: bytes) -> str:
+    """Extract concatenated native text from every page of an in-memory PDF.
+
+    Mirrors the measurement used by ``tests/fixtures/generate_large_pdf.py``
+    so that when the chunked pipeline's mock returns native text per chunk,
+    the final markdown char count closely tracks the committed baseline.
+    """
+
+    doc = pdfium.PdfDocument(io.BytesIO(data))
+    try:
+        parts: list[str] = []
+        for page in doc:
+            tp = page.get_textpage()
+            try:
+                n = tp.count_chars()
+                if n:
+                    parts.append(tp.get_text_range(index=0, count=n))
+            finally:
+                tp.close()
+            page.close()
+        return "\n".join(parts)
+    finally:
+        doc.close()
+
+
+def test_extract_large_pdf_succeeds_with_full_coverage(test_client, set_run_docling, fixtures_dir):
+    """AC2 / AC7b — 104-page PDF converts with ≥90% of native-extractable chars.
+
+    The mock stands in for Docling's real pipeline by returning the native
+    text of each chunk (read via pypdfium2), which represents a best-case
+    chunked conversion. The assertion is loose enough (0.90) to allow for
+    whitespace differences between pypdfium2's per-page text and the final
+    concatenated markdown, while strict enough to catch any regression that
+    drops a chunk silently (which would immediately trip well below 0.90).
+    """
+
+    baseline = json.loads((fixtures_dir / "large_text.baseline.json").read_text(encoding="utf-8"))
+    assert baseline["total_pages"] >= 100, "fixture must be a >=100-page PDF"
+
+    def native_text_stub(source_for_docling, *, converter):  # noqa: ARG001
+        text = _native_text_from_chunk(source_for_docling.stream.getvalue())
+        return text, {}, []
+
+    set_run_docling(native_text_stub)
+
+    pdf_bytes = (fixtures_dir / "large_text.pdf").read_bytes()
+    files = {"file": ("large_text.pdf", pdf_bytes, "application/pdf")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["partial"] is False
+    assert body["failed_pages"] == []
+    assert body["total_pages"] == baseline["total_pages"]
+
+    output_path = Path(body["output_path"])
+    text = output_path.read_text(encoding="utf-8")
+    body_md = text.split("---", 2)[2]
+    ratio = len(body_md.strip()) / baseline["native_text_chars"]
+    assert ratio >= 0.90, (
+        f"Chunked extraction recovered {ratio:.2%} of native text "
+        f"(baseline {baseline['native_text_chars']} chars); expected ≥90%."
+    )
+
+    # AC4 — clean conversion MUST NOT emit `partial:` in the frontmatter.
+    frontmatter = text.split("---", 2)[1]
+    assert "partial:" not in frontmatter
+    assert "failed_pages:" not in frontmatter
+
+
+def test_extract_partial_pdf_returns_200_with_warning(test_client, set_run_docling, fixtures_dir):
+    """AC3c, AC4, AC5, AC7c — partial conversion surfaces partial + failed_pages.
+
+    Mock fails pages 3 and 4 of chunk 2 (→ global pages 13, 14 with
+    chunk_size=10), well under the default 10% threshold. The endpoint
+    MUST return HTTP 200 with `partial: true` + `failed_pages: [13, 14]`
+    in JSON, and the written .md frontmatter MUST carry the same keys.
+    """
+
+    def failing_chunk2(source_for_docling, *, converter):  # noqa: ARG001
+        name = source_for_docling.name
+        text = _native_text_from_chunk(source_for_docling.stream.getvalue())
+        failed = [3, 4] if "#chunk002" in name else []
+        return text, {}, failed
+
+    set_run_docling(failing_chunk2)
+
+    pdf_bytes = (fixtures_dir / "large_text.pdf").read_bytes()
+    files = {"file": ("large_text.pdf", pdf_bytes, "application/pdf")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["partial"] is True
+    assert body["failed_pages"] == [13, 14]
+    assert body["total_pages"] == 104
+
+    # AC4 — frontmatter carries partial + failed_pages in block form.
+    output_path = Path(body["output_path"])
+    text = output_path.read_text(encoding="utf-8")
+    frontmatter = text.split("---", 2)[1]
+    assert "partial: true" in frontmatter
+    assert "failed_pages:" in frontmatter
+    assert "- 13" in frontmatter
+    assert "- 14" in frontmatter
+
+
+def test_extract_partial_pdf_renders_htmx_warning_block(test_client, set_run_docling, fixtures_dir):
+    """AC5 — HTMX response includes a visual warning block listing failed pages."""
+
+    def failing_chunk2(source_for_docling, *, converter):  # noqa: ARG001
+        name = source_for_docling.name
+        text = _native_text_from_chunk(source_for_docling.stream.getvalue())
+        failed = [3, 4] if "#chunk002" in name else []
+        return text, {}, failed
+
+    set_run_docling(failing_chunk2)
+
+    pdf_bytes = (fixtures_dir / "large_text.pdf").read_bytes()
+    files = {"file": ("large_text.pdf", pdf_bytes, "application/pdf")}
+    response = test_client.post(
+        "/extract",
+        files=files,
+        headers={"Accept": "text/html"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    html = response.text
+    assert "result-card--success" in html
+    assert "partial-notice" in html
+    assert "PARTIAL_EXTRACTION" in html
+    # The list of failed pages must actually show the document-wide numbers,
+    # not the chunk-relative ones — if the offset were dropped we'd see
+    # "3, 4" instead of "13, 14".
+    assert "13, 14" in html
+
+
+def test_extract_pdf_exceeds_failure_threshold_returns_422(
+    test_client, set_run_docling, fixtures_dir
+):
+    """AC3b, AC7d — above MAX_FAILED_PAGES_RATIO → HTTP 422 CONVERSION_FAILED."""
+
+    def fail_half(source_for_docling, *, converter):  # noqa: ARG001
+        # Fail pages 1-5 of every 10-page chunk → 50% of pages across the doc,
+        # well above the default 10% ratio.
+        text = _native_text_from_chunk(source_for_docling.stream.getvalue())
+        return text, {}, [1, 2, 3, 4, 5]
+
+    set_run_docling(fail_half)
+
+    pdf_bytes = (fixtures_dir / "large_text.pdf").read_bytes()
+    files = {"file": ("large_text.pdf", pdf_bytes, "application/pdf")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "CONVERSION_FAILED"
+    assert "over threshold" in body["message"]
+
+
+def test_extract_success_emits_partial_false_in_json_response(test_client, sample_pdf_bytes):
+    """AC5 / API contract — JSON envelope ALWAYS includes partial/failed_pages.
+
+    Unlike the frontmatter (which omits the keys on clean conversions, per
+    FR4), the JSON response carries `partial: false` and `failed_pages: []`
+    even on success so API consumers can assume a stable shape.
+    """
+
+    files = {"file": ("sample.pdf", sample_pdf_bytes, "application/pdf")}
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["partial"] is False
+    assert body["failed_pages"] == []
+    assert "total_pages" in body

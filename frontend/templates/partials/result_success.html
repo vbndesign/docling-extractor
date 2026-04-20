@@ -17,6 +17,18 @@
     </div>
   </div>
   <div class="path-block">{{ result.output_path }}</div>
+  {% if result.partial %}
+  <div class="partial-notice" role="status">
+    <strong>PARTIAL_EXTRACTION</strong>
+    <p>
+      Extração parcial: {{ result.failed_pages | length }}
+      {% if result.total_pages %}de {{ result.total_pages }} {% endif %}páginas falharam.
+    </p>
+    <p class="partial-notice__pages">
+      Páginas perdidas: {{ result.failed_pages | join(', ') }}
+    </p>
+  </div>
+  {% endif %}
   <p class="result-card__helper">
     ✓ High fidelity extraction complete — {{ result.filename }}
   </p>

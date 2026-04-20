@@ -683,6 +683,50 @@ button {
 }
 
 /* =========================================================================
+ * Partial-success notice (Story 1.7)
+ *
+ * Inline block rendered inside `result-card--success` when chunked PDF
+ * extraction succeeded but one or more pages failed (below the
+ * MAX_FAILED_PAGES_RATIO threshold). Uses ONLY existing tokens
+ * (`--color-accent` for the accent stripe) — no new color tokens per
+ * story constraint "não criar token novo".
+ * ========================================================================= */
+
+.partial-notice {
+  padding: var(--space-4);
+  background: rgba(74, 144, 226, 0.05);
+  border: 1px solid rgba(74, 144, 226, 0.2);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.partial-notice strong {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.partial-notice p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.partial-notice__pages {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+/* =========================================================================
  * §5.12 result-card--error
  * ========================================================================= */
 
