@@ -45,11 +45,26 @@ pip install -e ".[dev]"
 
 Copiar `.env.example` para `.env` e ajustar se necessário:
 
-| Variável                  | Default    | Descrição                                      |
-| ------------------------- | ---------- | ---------------------------------------------- |
-| `OUTPUT_DIR`              | `./output` | Diretório dos `.md` gerados                    |
-| `MAX_UPLOAD_MB`           | `50`       | Limite de upload (HTTP 413 acima disso)        |
-| `REQUEST_TIMEOUT_SECONDS` | `60`       | Timeout duro por request (HTTP 504 se excede)  |
+| Variável                  | Default    | Descrição                                                          |
+| ------------------------- | ---------- | ------------------------------------------------------------------ |
+| `OUTPUT_DIR`              | `./output` | Diretório dos `.md` gerados                                        |
+| `MAX_UPLOAD_MB`           | `50`       | Limite de upload (HTTP 413 acima disso)                            |
+| `REQUEST_TIMEOUT_SECONDS` | `600`      | Timeout duro por request (HTTP 504 se excede — 10 min cobre PDFs de ~100 páginas) |
+| `PDF_CHUNK_SIZE`          | `10`       | Páginas por chunk quando o PDF ultrapassa `PDF_CHUNK_THRESHOLD`    |
+| `PDF_CHUNK_THRESHOLD`     | `20`       | Acima deste nº de páginas, o PDF é processado em chunks            |
+| `MAX_FAILED_PAGES_RATIO`  | `0.10`     | Fração de páginas falhas aceita antes de `422 CONVERSION_FAILED`   |
+
+**Sobre chunking de PDFs grandes (Story 1.7):** PDFs com mais de
+`PDF_CHUNK_THRESHOLD` páginas são divididos em blocos de `PDF_CHUNK_SIZE`
+páginas e convertidos bloco-a-bloco. Isso evita um vazamento de memória
+nativa no estágio *preprocess* do pypdfium2 (backend do Docling) que
+silenciosamente descartava ~90 % das páginas em PDFs de 100+ páginas.
+Ajuste `PDF_CHUNK_SIZE` para baixo se você tiver pouca RAM; para cima
+para reduzir o overhead de modelo por chunk. Se mais de
+`MAX_FAILED_PAGES_RATIO` das páginas falharem, o endpoint retorna
+`422 CONVERSION_FAILED`; abaixo disso, o `.md` é gerado com
+`partial: true` + `failed_pages: [...]` no frontmatter e a UI destaca
+as páginas perdidas.
 
 ## Como rodar
 
@@ -94,9 +109,22 @@ da `ERROR_CATALOG`.
 - **Primeiro boot demorado (2–5 min):** Docling está baixando os modelos
   (~600 MB, cacheados em `~/.cache/docling` nas execuções seguintes).
   Normal. Barra de progresso aparece no console do `uvicorn`.
+- **PDFs grandes demoram até ~3 minutos:** PDFs de 100+ páginas passam
+  pelo chunking automático (Story 1.7). O timeout default é **10 min**
+  (`REQUEST_TIMEOUT_SECONDS=600`). Se o seu workload é ainda maior, suba
+  esse valor no `.env`. PDFs pequenos continuam respondendo em <30 s.
 - **PDF não gera conteúdo útil:** pode ser um PDF *escaneado* (páginas
   como imagem, sem texto extraível). A v1 **não tem OCR**; o endpoint
   responde `422 CONVERSION_FAILED` com hint "OCR is not enabled in v1".
+- **Resposta traz `partial: true` e páginas faltando:** algumas páginas
+  do PDF falharam na conversão mas o restante foi recuperado (abaixo do
+  `MAX_FAILED_PAGES_RATIO`). O `.md` salvo tem `partial: true` +
+  `failed_pages: [...]` no frontmatter; a UI mostra as páginas perdidas
+  em um bloco de aviso. Para recusar esses casos em vez de aceitá-los,
+  reduza `MAX_FAILED_PAGES_RATIO` (ex: `0.01`).
+- **`422 CONVERSION_FAILED: ... over threshold`:** mais de
+  `MAX_FAILED_PAGES_RATIO` das páginas falharam; nenhum `.md` é gerado.
+  Tente um PDF alternativo da mesma fonte, ou relaxe o threshold.
 - **URL não gera conteúdo:** a página pode ser uma SPA com render em
   JavaScript. Docling **não executa JS**; sites dinâmicos como
   `twitter.com`, `app.notion.so` etc. não são suportados na v1.
@@ -150,6 +178,11 @@ docling-extractor/
   ingestão.
 - **Sites dinâmicos (SPA) não suportados:** Docling não executa
   JavaScript.
+
+> **PDFs grandes (100+ páginas):** suportados desde a Story 1.7 via
+> chunking automático. O PRD original (NFR3) citava um limite de ~20
+> páginas, mas esse teto foi removido — agora o único limite prático é
+> `MAX_UPLOAD_MB` (50 MB por default).
 
 ## Roadmap (v2+)
 

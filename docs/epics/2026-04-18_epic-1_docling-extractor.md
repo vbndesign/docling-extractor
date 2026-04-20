@@ -27,8 +27,9 @@ Entregar, de forma incremental, uma ferramenta local com interface browser que a
 | 1.4 | Extraction API Endpoint | Draft | 9 (AC9 new em v1.3) | PRD §6 Story 1.4 | 1.3 | arch §7.2, **§7.3** (AC9), §10.2 |
 | 1.5 | Browser Frontend with HTMX | Draft | 9 | PRD §6 Story 1.5 | 1.4 | **frontend-spec v1.1** (canônico) + arch §7.3 |
 | 1.6 | QA Hardening & Documentation | Draft | 7 | PRD §6 Story 1.6 | 1.5 | arch §10.4, §12 |
+| 1.7 | Large-PDF Chunked Extraction & Partial-Success Visibility | Ready | 9 | Post-v1 bugfix (out-of-PRD) | 1.6 | arch §2.2 R1, §5.1, §10.2–§10.4 + @dev probe report 2026-04-19 |
 
-**Total:** 6 stories / 52 ACs.
+**Total:** 7 stories / 61 ACs (Story 1.7 added 2026-04-19 as post-v1 hardening extension).
 
 **Status lifecycle:** `Draft pending` → `Draft` → `Ready` → `InProgress` → `InReview` → `Done`.
 Atualizar esta tabela a cada transição.
@@ -38,7 +39,7 @@ Atualizar esta tabela a cada transição.
 ## 3. Execution Sequence
 
 ```
-1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6
+1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 (post-v1 hardening)
 ```
 
 **Regra invariante (PRD §5):** cada story DEVE estar em status `Done` antes da próxima iniciar `*draft`. Justificativa: não há paralelismo real — backend precede frontend, testes precedem QA hardening.
@@ -74,6 +75,7 @@ Epic 1 é considerado `Done` quando:
 | 2026-04-18 15:45 | @sm (River) | @po | **6 stories drafted** em `docs/stories/1.1`…`1.6` (plural request from user — deviation from PRD §5 strict-sequential-draft invariant). Pronto para `*validate-story-draft` começando pela 1.1. |
 | 2026-04-18 | @po (Pax) | @dev | **Story 1.1 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Ready para `@dev *develop 1.1`. |
 | 2026-04-18 | @po (Pax) | @dev | **Story 1.2 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Should-Fix advisory: AC5 image-absence test assertion (non-blocking). Ready para `@dev *develop 1.2`. |
+| 2026-04-19 | @po (Pax) | @dev | **Story 1.7 validated: GO (10/10, readiness 9/10)**. Status Draft → Ready. 3 advisory should-fix items (non-blocking) — ver Change Log da story 1.7. Ready para `@dev *develop 1.7`. |
 
 ---
 
