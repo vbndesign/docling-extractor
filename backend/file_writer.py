@@ -9,8 +9,11 @@ collision rather than overwriting an existing file (AC7 + arch §2.2 R6).
 Filename derivation priority (FR7 / arch §5.1):
 
 1. ``metadata.source_title`` when non-empty after ``.strip()``.
-2. The stem of ``source.original_filename`` for ``pdf_upload`` /
-   ``pdf_local_path`` sources.
+2. The stem of ``source.original_filename`` for file sources
+   (``pdf_upload``, ``pdf_local_path``, ``docx_upload``,
+   ``docx_local_path``). ``Path.stem`` strips whatever extension was on
+   the original file, so both ``briefing.docx`` and ``paper.pdf`` land
+   on a ``.md`` name cleanly — never ``briefing.docx.md``.
 3. A slug derived from the URL (``source.location``): the last
    non-empty path segment, falling back to the host.
 
@@ -35,7 +38,7 @@ from .models import ExtractedMetadata, SaveResult, SourceDescriptor
 
 SLUG_MAX_LENGTH = 200
 EXTENSION = ".md"
-PDF_SOURCE_KINDS = frozenset({"pdf_upload", "pdf_local_path"})
+FILE_SOURCE_KINDS = frozenset({"pdf_upload", "pdf_local_path", "docx_upload", "docx_local_path"})
 
 
 def _slug_from_url(location: str) -> str:
@@ -59,7 +62,7 @@ def _raw_basename(metadata: ExtractedMetadata, source: SourceDescriptor) -> str:
         if title:
             return title
 
-    if source.kind in PDF_SOURCE_KINDS and source.original_filename:
+    if source.kind in FILE_SOURCE_KINDS and source.original_filename:
         stem = Path(source.original_filename).stem
         if stem:
             return stem

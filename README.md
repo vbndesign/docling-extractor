@@ -1,7 +1,8 @@
 # Docling Extractor
 
-Local, single-user tool that converts URLs (HTML / PDF) and PDF uploads
-into Markdown files ready for ingestion into an Obsidian vault. Built on
+Local, single-user tool that converts URLs (HTML / PDF), PDF uploads, and
+Word documents (`.docx`) into Markdown files ready for ingestion into an
+Obsidian vault. Built on
 [Docling](https://github.com/docling-project/docling) and FastAPI.
 
 ## Visão geral
@@ -89,12 +90,16 @@ Abrir <http://127.0.0.1:8000> (o `docling-serve` já abre automaticamente).
 
 ## Como usar
 
-A página principal tem três modos de entrada numa única tela:
+A página principal tem três campos de entrada numa única tela, cobrindo
+seis modalidades de fonte (Story 1.8):
 
-1. **Colar URL** (artigo HTML ou PDF remoto) → `Extract`
-2. **Drag-and-drop de PDF local** → conversão automática ao soltar
-3. **Colar caminho absoluto** no campo `local_path` (fallback) →
-   `Extract`
+1. **URL HTML** (artigo web) → campo `url` → `Extract`
+2. **URL PDF** (PDF remoto) → campo `url` → `Extract`
+3. **Upload PDF** (drag-and-drop ou file picker) → campo `file`
+4. **Upload DOCX** (drag-and-drop ou file picker) → campo `file`
+5. **Local path PDF** (caminho absoluto para `.pdf`) → campo `local_path`
+6. **Local path DOCX** (caminho absoluto para `.docx`) → campo
+   `local_path`
 
 Em qualquer modo, o resultado aparece in-place abaixo (via HTMX, sem
 reload) com o caminho do `.md` gerado. O arquivo fica em `OUTPUT_DIR` e
@@ -137,7 +142,11 @@ da `ERROR_CATALOG`.
 - **`local_path` não aceita seu caminho:** o campo aceita caminhos
   absolutos, inclusive formato com aspas (`"C:\...\file.pdf"`) que o
   "Copy as path" do Windows Explorer produz. O arquivo precisa ser `.pdf`
-  válido e existir.
+  ou `.docx` válido (magic bytes corretos) e existir.
+- **DOCX com macros (`.docm`) não suportado na v1:** salve como `.docx`
+  antes de submeter. Arquivos `.docm` podem ter magic bytes ZIP idênticos
+  a `.docx`, mas Docling pode falhar ao interpretar recursos específicos
+  de macro — o endpoint responde `422 CONVERSION_FAILED` nesse caso.
 
 ## Estrutura do projeto
 
@@ -159,7 +168,7 @@ docling-extractor/
 │   └── static/                 # style.css, htmx.min.js (vendored)
 ├── tests/
 │   ├── conftest.py             # fixtures compartilhadas
-│   ├── fixtures/               # sample.html, sample.pdf, scanned.pdf
+│   ├── fixtures/               # sample.html, sample.pdf, sample.docx, scanned.pdf
 │   └── test_*.py               # pytest suite
 ├── output/                     # gitignored — .md gerados
 ├── pyproject.toml
@@ -172,7 +181,7 @@ docling-extractor/
 - **Sem OCR:** PDFs escaneados (página = imagem) retornam erro 422.
 - **Sem batch:** uma fonte por requisição; sem fila.
 - **Imagens ignoradas:** o `.md` gerado contém só texto; figuras dos PDFs
-  não são extraídas nem descritas.
+  e DOCX não são extraídas nem descritas.
 - **Sem autenticação:** é uma ferramenta local single-user. Não expor
   na internet.
 - **Desktop only:** UI não é otimizada para mobile.
@@ -181,6 +190,9 @@ docling-extractor/
   ingestão.
 - **Sites dinâmicos (SPA) não suportados:** Docling não executa
   JavaScript.
+- **Formatos Word legacy fora do escopo:** `.doc` (Word 97-2003 binário),
+  `.odt` e `.rtf` não são suportados — use `.docx`. DOCX remoto via URL
+  também está fora do escopo v1 (apenas upload ou `local_path`).
 
 > **PDFs grandes (100+ páginas):** suportados desde a Story 1.7 via
 > chunking automático. O PRD original (NFR3) citava um limite de ~20

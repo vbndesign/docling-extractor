@@ -31,6 +31,8 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -49,6 +51,18 @@ Source = str | Path | BinaryIO
 HttpClient = httpx.AsyncClient | CurlAsyncSession
 
 PDF_MAGIC = b"%PDF-"
+# DOCX files are OOXML packages — ZIP archives whose local file header
+# starts with ``PK\x03\x04``. Story 1.8 AC3: we only sniff the first 4
+# bytes and defer OOXML-vs-xlsx/pptx discrimination to Docling itself
+# (its backend raises ``ConversionError`` when it can't open a package).
+DOCX_MAGIC = b"PK\x03\x04"
+
+_DOCX_CORE_XML_PATH = "docProps/core.xml"
+_DOCX_CORE_NS = {
+    "cp": "http://schemas.openxmlformats.org/package/2006/metadata/core-properties",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "dcterms": "http://purl.org/dc/terms/",
+}
 
 # Minimum stripped markdown length below which we treat the conversion as
 # "produced no usable content". The real failure mode is a scanned PDF (no
@@ -124,6 +138,74 @@ def _parse_html_meta(html_bytes: bytes) -> dict[str, str]:
         if value:
             meta["author"] = value
     return meta
+
+
+def _parse_docx_core_properties(data: bytes) -> dict[str, Any]:
+    """Read ``docProps/core.xml`` from a DOCX archive and map to FR4 keys.
+
+    Story 1.8 AC5. Returns a dict with any subset of ``source_title``,
+    ``author``, ``year`` — absent or blank values are simply omitted
+    (PRD FR4: omission over placeholders). Never raises for malformed or
+    missing metadata; Docling's own pipeline surfaces the real failure if
+    the package is truly unreadable.
+    """
+
+    meta: dict[str, Any] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            with zf.open(_DOCX_CORE_XML_PATH) as handle:
+                xml_bytes = handle.read()
+    except (KeyError, zipfile.BadZipFile):
+        return meta
+
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return meta
+
+    title_el = root.find("dc:title", _DOCX_CORE_NS)
+    if title_el is not None and title_el.text:
+        title = title_el.text.strip()
+        if title:
+            meta["source_title"] = title
+
+    creator_el = root.find("dc:creator", _DOCX_CORE_NS)
+    if creator_el is not None and creator_el.text:
+        # dc:creator can list multiple authors separated by ``;`` — take
+        # the first to match the ExtractedMetadata shape (single string).
+        first = creator_el.text.split(";")[0].strip()
+        if first:
+            meta["author"] = first
+
+    created_el = root.find("dcterms:created", _DOCX_CORE_NS)
+    if created_el is not None and created_el.text:
+        raw = created_el.text.strip()
+        # ISO-8601 timestamps start with YYYY (e.g. 2024-03-15T12:34:56Z).
+        if len(raw) >= 4 and raw[:4].isdigit():
+            meta["year"] = int(raw[:4])
+
+    return meta
+
+
+async def _convert_docx_bytes(
+    data: bytes,
+    *,
+    display_name: str,
+    converter: DocumentConverter,
+) -> tuple[str, dict[str, Any]]:
+    """Run Docling over a DOCX byte stream (single call, no chunking).
+
+    DOCX has no OCR or pypdfium2 heap pressure, so the Story 1.7 chunker
+    is intentionally bypassed. Metadata is read from ``docProps/core.xml``
+    directly — Docling's ``document.name`` for DOCX mirrors the stream
+    name (i.e. the filename), which is not a useful ``source_title``.
+    """
+
+    docling_input = DocumentStream(name=display_name, stream=io.BytesIO(data))
+    markdown, _docling_meta, _ = await asyncio.to_thread(
+        _run_docling, docling_input, converter=converter
+    )
+    return markdown, _parse_docx_core_properties(data)
 
 
 def _chunk_pdf_bytes(data: bytes, chunk_size: int) -> list[bytes]:
@@ -310,8 +392,8 @@ def _guard_non_empty_markdown(markdown: str, kind: SourceKind) -> None:
 
     Story 1.6 AC2: a scanned PDF (no extractable text) or a JS-rendered SPA
     would otherwise produce a `.md` with only frontmatter and an empty body.
-    The error message steers the user to the real cause (no OCR / no JS)
-    rather than letting them chase a silent success.
+    The error message steers the user to the real cause (no OCR / no JS /
+    empty DOCX) rather than letting them chase a silent success.
     """
 
     if len(markdown.strip()) >= _MIN_MARKDOWN_CHARS:
@@ -321,6 +403,8 @@ def _guard_non_empty_markdown(markdown: str, kind: SourceKind) -> None:
             "Extracted content is empty. "
             "JavaScript-rendered pages (SPA) are not supported in v1."
         )
+    if kind in ("docx_upload", "docx_local_path"):
+        raise ConversionError("DOCX produced no extractable text (file may be empty or corrupt).")
     raise ConversionError(
         "PDF appears to be scanned without extractable text. " "OCR is not enabled in v1."
     )
@@ -448,51 +532,114 @@ async def extract(
         data = source.read()  # type: ignore[union-attr]
         if not isinstance(data, bytes | bytearray):
             raise InvalidInputError("File-like source must yield bytes from .read()")
-        if not data.startswith(PDF_MAGIC):
-            raise InvalidInputError("Uploaded file is not a valid PDF (missing %PDF- magic bytes)")
-        name = getattr(source, "name", None) or "upload.pdf"
-        if isinstance(name, str):
-            display_name = Path(name).name
+        raw_name = getattr(source, "name", None)
+        name: str = raw_name if isinstance(raw_name, str) and raw_name else "upload.pdf"
+        display_name = Path(name).name
+        data_bytes = bytes(data)
+        suffix = Path(name).suffix.lower()
+
+        # Story 1.8 AC3a: when the caller declares a ``.docx`` extension,
+        # the content MUST actually be a ZIP/OOXML package. A PDF renamed
+        # to ``.docx`` is a malformed request — we reject it with the
+        # DOCX-specific hint instead of silently transcoding it as a PDF.
+        if suffix == ".docx":
+            if not data_bytes.startswith(DOCX_MAGIC):
+                raise InvalidInputError(
+                    "Uploaded file is not a valid .docx (missing ZIP magic bytes)"
+                )
+            markdown, meta = await _convert_docx_bytes(
+                data_bytes,
+                display_name=display_name,
+                converter=converter,
+            )
+            total_pages = None
+            failed_pages = []
+            descriptor = SourceDescriptor(
+                kind="docx_upload",
+                location=display_name,
+                original_filename=display_name,
+            )
+        elif data_bytes.startswith(PDF_MAGIC):
+            markdown, meta, total_pages, failed_pages = await _convert_pdf_bytes(
+                data_bytes,
+                display_name=display_name,
+                converter=converter,
+                settings=settings,
+            )
+            descriptor = SourceDescriptor(
+                kind="pdf_upload",
+                location=display_name,
+                original_filename=display_name,
+            )
+        elif data_bytes.startswith(DOCX_MAGIC):
+            # Unknown/no extension but DOCX magic — accept and route to DOCX.
+            markdown, meta = await _convert_docx_bytes(
+                data_bytes,
+                display_name=display_name,
+                converter=converter,
+            )
+            total_pages = None
+            failed_pages = []
+            descriptor = SourceDescriptor(
+                kind="docx_upload",
+                location=display_name,
+                original_filename=display_name,
+            )
         else:
-            display_name = "upload.pdf"
-        markdown, meta, total_pages, failed_pages = await _convert_pdf_bytes(
-            bytes(data),
-            display_name=display_name,
-            converter=converter,
-            settings=settings,
-        )
-        descriptor = SourceDescriptor(
-            kind="pdf_upload",
-            location=display_name,
-            original_filename=display_name,
-        )
+            raise InvalidInputError(
+                "Uploaded file is not a valid PDF or DOCX (missing magic bytes)"
+            )
 
     elif isinstance(source, str | Path):
         path = Path(source)
         if not path.exists() or not path.is_file():
             raise InvalidInputError(f"File not found: {path}")
-        if path.suffix.lower() != ".pdf":
-            raise InvalidInputError(f"Only .pdf files are supported for local paths: {path}")
+        suffix = path.suffix.lower()
+        if suffix not in {".pdf", ".docx"}:
+            raise InvalidInputError(
+                f"Only .pdf and .docx files are supported for local paths: {path}"
+            )
         data = path.read_bytes()
-        if not data.startswith(PDF_MAGIC):
-            raise InvalidInputError(f"File is not a valid PDF (missing %PDF- magic bytes): {path}")
-        # Wrap in DocumentStream rather than passing the Path directly:
-        # OneDrive reparse points (and some other special filesystems) can
-        # break Docling's path-based backends with
-        # "Inconsistent number of pages: N!=-1", while the in-memory stream
-        # path is unaffected. This also unifies the Docling input shape
-        # across URL / upload / local_path branches.
-        markdown, meta, total_pages, failed_pages = await _convert_pdf_bytes(
-            data,
-            display_name=path.name,
-            converter=converter,
-            settings=settings,
-        )
-        descriptor = SourceDescriptor(
-            kind="pdf_local_path",
-            location=str(path.resolve()),
-            original_filename=path.name,
-        )
+
+        if suffix == ".pdf":
+            if not data.startswith(PDF_MAGIC):
+                raise InvalidInputError(
+                    f"File is not a valid PDF (missing %PDF- magic bytes): {path}"
+                )
+            # Wrap in DocumentStream rather than passing the Path directly:
+            # OneDrive reparse points (and some other special filesystems)
+            # can break Docling's path-based backends with
+            # "Inconsistent number of pages: N!=-1", while the in-memory
+            # stream path is unaffected. This also unifies the Docling
+            # input shape across URL / upload / local_path branches.
+            markdown, meta, total_pages, failed_pages = await _convert_pdf_bytes(
+                data,
+                display_name=path.name,
+                converter=converter,
+                settings=settings,
+            )
+            descriptor = SourceDescriptor(
+                kind="pdf_local_path",
+                location=str(path.resolve()),
+                original_filename=path.name,
+            )
+        else:  # .docx
+            if not data.startswith(DOCX_MAGIC):
+                raise InvalidInputError(
+                    f"File is not a valid .docx (missing ZIP magic bytes): {path}"
+                )
+            markdown, meta = await _convert_docx_bytes(
+                data,
+                display_name=path.name,
+                converter=converter,
+            )
+            total_pages = None
+            failed_pages = []
+            descriptor = SourceDescriptor(
+                kind="docx_local_path",
+                location=str(path.resolve()),
+                original_filename=path.name,
+            )
 
     else:
         raise InvalidInputError(f"Unsupported source type: {type(source).__name__}")

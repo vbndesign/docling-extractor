@@ -67,7 +67,8 @@ ERROR_CATALOG: dict[str, tuple[str, str]] = {
     ),
     "CONVERSION_FAILED": (
         "Docling conversion failed.",
-        "Source may be corrupted, empty, or a scanned PDF (OCR not supported in v1).",
+        "Source may be corrupted, empty, a scanned PDF (OCR not supported in v1), "
+        "or a DOCX variant Docling cannot parse (e.g. .doc/.odt/.rtf).",
     ),
     "REQUEST_TIMEOUT": (
         "Extraction exceeded timeout.",

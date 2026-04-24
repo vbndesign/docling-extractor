@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import errors
 from .config import Settings, get_settings
-from .docling_service import PDF_MAGIC, extract, make_http_client
+from .docling_service import DOCX_MAGIC, PDF_MAGIC, extract, make_http_client
 from .errors import (
     InvalidInputError,
     RequestTimeoutError,
@@ -111,7 +111,11 @@ def index(
 
 
 def _validate_local_path(raw: str) -> Path:
-    """Enforce arch §2.2 R4 for the `local_path` fallback."""
+    """Enforce arch §2.2 R4 for the `local_path` fallback.
+
+    Story 1.8 AC4b: accepts both ``.pdf`` and ``.docx``, with magic-byte
+    checks routed by suffix (``%PDF-`` vs ``PK\\x03\\x04``).
+    """
 
     # Windows Explorer's "Copy as path" wraps paths in double quotes; strip
     # surrounding quotes/whitespace so that natural paste flow works.
@@ -119,12 +123,18 @@ def _validate_local_path(raw: str) -> Path:
     path = Path(raw)
     if not path.is_file():
         raise InvalidInputError(f"local_path does not exist or is not a file: {raw}")
-    if path.suffix.lower() != ".pdf":
-        raise InvalidInputError(f"local_path must point to a .pdf file: {raw}")
+    suffix = path.suffix.lower()
+    if suffix not in {".pdf", ".docx"}:
+        raise InvalidInputError(f"local_path must point to a .pdf or .docx file: {raw}")
+    expected_magic = PDF_MAGIC if suffix == ".pdf" else DOCX_MAGIC
     with path.open("rb") as handle:
-        head = handle.read(len(PDF_MAGIC))
-    if not head.startswith(PDF_MAGIC):
-        raise InvalidInputError(f"local_path is not a valid PDF (missing %PDF- magic bytes): {raw}")
+        head = handle.read(len(expected_magic))
+    if not head.startswith(expected_magic):
+        if suffix == ".pdf":
+            raise InvalidInputError(
+                f"local_path is not a valid PDF (missing %PDF- magic bytes): {raw}"
+            )
+        raise InvalidInputError(f"local_path is not a valid .docx (missing ZIP magic bytes): {raw}")
     return path
 
 

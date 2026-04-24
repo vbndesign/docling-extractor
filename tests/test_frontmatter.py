@@ -188,6 +188,51 @@ def test_build_omits_partial_keys_when_partial_false(fixed_now, html_source) -> 
     assert "failed_pages:" not in rendered
 
 
+# ---- Story 1.8 — DOCX metadata condicional --------------------------------
+
+
+@pytest.fixture
+def docx_source() -> SourceDescriptor:
+    return SourceDescriptor(
+        kind="docx_upload",
+        location="briefing.docx",
+        original_filename="briefing.docx",
+    )
+
+
+def test_build_docx_emits_all_core_properties(fixed_now, docx_source) -> None:
+    """AC5 — complete DOCX core.xml metadata lands in YAML frontmatter."""
+
+    metadata = ExtractedMetadata(
+        source_title="Docling DOCX Fixture",
+        author="Test Author",
+        year=2024,
+    )
+    rendered = build(metadata, docx_source, fixed_now)
+    parsed = yaml.safe_load(_strip_delimiters(rendered))
+
+    assert parsed["source_title"] == "Docling DOCX Fixture"
+    assert parsed["author"] == "Test Author"
+    assert parsed["year"] == 2024
+
+
+def test_build_docx_omits_optional_keys_when_absent(fixed_now, docx_source) -> None:
+    """AC5 / FR4 — DOCX without core.xml metadata still produces clean YAML.
+
+    The required keys are still present; ``source_title``/``author``/``year``
+    are omitted entirely rather than rendered as ``null`` or ``""``.
+    """
+
+    rendered = build(ExtractedMetadata(), docx_source, fixed_now)
+
+    assert "source_title" not in rendered
+    assert "author" not in rendered
+    assert "year" not in rendered
+    # Required keys still present
+    parsed = yaml.safe_load(_strip_delimiters(rendered))
+    assert REQUIRED_KEYS.issubset(parsed.keys())
+
+
 def test_build_defaults_match_clean_conversion(fixed_now, html_source) -> None:
     """Default `partial_info` MUST behave identically to `(False, [])`.
 

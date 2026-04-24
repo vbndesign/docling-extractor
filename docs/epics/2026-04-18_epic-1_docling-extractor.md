@@ -28,8 +28,9 @@ Entregar, de forma incremental, uma ferramenta local com interface browser que a
 | 1.5 | Browser Frontend with HTMX | Draft | 9 | PRD §6 Story 1.5 | 1.4 | **frontend-spec v1.1** (canônico) + arch §7.3 |
 | 1.6 | QA Hardening & Documentation | Draft | 7 | PRD §6 Story 1.6 | 1.5 | arch §10.4, §12 |
 | 1.7 | Large-PDF Chunked Extraction & Partial-Success Visibility | Ready | 9 | Post-v1 bugfix (out-of-PRD) | 1.6 | arch §2.2 R1, §5.1, §10.2–§10.4 + @dev probe report 2026-04-19 |
+| 1.8 | DOCX Input Support — Brownfield Addition | Ready | 10 | Post-v1 format expansion (out-of-PRD) | 1.7 | arch §5.1, §6.3, §7.2, §10.1–§10.2 + Story 1.8 Story Context (scope locks) |
 
-**Total:** 7 stories / 61 ACs (Story 1.7 added 2026-04-19 as post-v1 hardening extension).
+**Total:** 8 stories / 71 ACs (Story 1.7 added 2026-04-19 as post-v1 hardening extension; Story 1.8 added 2026-04-24 as post-v1 format-expansion brownfield story — `.docx` input via upload + `local_path`).
 
 **Status lifecycle:** `Draft pending` → `Draft` → `Ready` → `InProgress` → `InReview` → `Done`.
 Atualizar esta tabela a cada transição.
@@ -39,7 +40,7 @@ Atualizar esta tabela a cada transição.
 ## 3. Execution Sequence
 
 ```
-1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 (post-v1 hardening)
+1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 (post-v1 hardening) → 1.8 (post-v1 format expansion)
 ```
 
 **Regra invariante (PRD §5):** cada story DEVE estar em status `Done` antes da próxima iniciar `*draft`. Justificativa: não há paralelismo real — backend precede frontend, testes precedem QA hardening.
@@ -76,6 +77,7 @@ Epic 1 é considerado `Done` quando:
 | 2026-04-18 | @po (Pax) | @dev | **Story 1.1 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Ready para `@dev *develop 1.1`. |
 | 2026-04-18 | @po (Pax) | @dev | **Story 1.2 validated: GO (10/10, readiness 9.5/10)**. Status Draft → Ready. Should-Fix advisory: AC5 image-absence test assertion (non-blocking). Ready para `@dev *develop 1.2`. |
 | 2026-04-19 | @po (Pax) | @dev | **Story 1.7 validated: GO (10/10, readiness 9/10)**. Status Draft → Ready. 3 advisory should-fix items (non-blocking) — ver Change Log da story 1.7. Ready para `@dev *develop 1.7`. |
+| 2026-04-24 | @po (Pax) | @dev | **Story 1.8 validated: GO (10/10, readiness 9/10, High confidence)**. Status Draft → Ready. 4 advisory should-fix items (non-blocking) — ver Change Log da story 1.8. Ready para `@dev *develop 1.8`. |
 
 ---
 

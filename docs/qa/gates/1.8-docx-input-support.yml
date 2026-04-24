@@ -1,0 +1,350 @@
+schema: 1
+story: "1.8"
+storyTitle: "DOCX Input Support — Brownfield Addition"
+epic: "Epic 1 — Docling Extractor"
+branch: "dev"
+commitUnderReview: "uncommitted working tree on dev (8 modified files + 3 new — Story 1.8 full scope)"
+reviewer: "Quinn"
+updated: "2026-04-24T10:45:00Z"
+coderabbit:
+  enabled: false
+  reason: >
+    `coderabbit_integration.enabled: true` not set in core-config.yaml and
+    WSL is not installed in this environment. Fallback to manual review
+    per the story's CodeRabbit section directive.
+
+gate: PASS
+status_reason: >
+  All 10 ACs met with direct test traceability. Dispatch in
+  `docling_service.extract` cleanly routes DOCX via both file-like and
+  Path branches, preserving the PDF-first behaviour for non-`.docx`
+  uploads while enforcing the AC3a extension-first guard when `.docx` is
+  declared. Metadata extraction via stdlib `zipfile` + `xml.etree`
+  faithfully maps `dc:title`, `dc:creator` (first author on
+  semicolon-split), and `dcterms:created` (year) to the existing
+  `ExtractedMetadata` shape, honouring PRD FR4 (omit missing fields;
+  never emit `null` or placeholders). File-writer extension-agnosticism
+  was already in place from Story 1.3 — the only change needed was
+  expanding the `FILE_SOURCE_KINDS` frozenset, confirming Pax's PO
+  advisory was correct.
+
+  Test coverage added: 3 unit tests in `test_docling_service.py`
+  (file-like DOCX success, Path DOCX success, `.docx`-ext-with-non-ZIP
+  rejection), 2 unit tests in `test_frontmatter.py` (complete DOCX
+  metadata emission, omission when absent), and 5 integration tests in
+  `test_endpoints.py` (upload success, local_path success, frontmatter
+  metadata verification end-to-end, AC3a 400 path, AC3b 422 path). Full
+  suite 107/107 green in 9.88 s warm run (well under Story 1.6 AC5's
+  60 s cap).
+
+  Lint and format clean (`ruff check` + `ruff format --check` both
+  green). README truthfully reflects the six input modalities now
+  supported, and the troubleshooting entry for `.docm` sets expectation
+  cleanly without blocking the format. The user has confirmed a manual
+  browser smoke test passed 100%, closing the only DoD item @dev left
+  pending ("Manual smoke test in Chrome + Firefox on Windows").
+
+  No regressions in Stories 1.1 → 1.7 suites. No breaking changes to the
+  `/extract` JSON envelope — `SourceKind` adds new literal values but
+  JSON consumers reading `kind` as a string are unaffected. UI text
+  changes are non-structural (same HTMX contract, same result card).
+
+top_issues:
+  - id: "SEC-001"
+    severity: low
+    file: "backend/docling_service.py:143-187"
+    finding: >
+      `_parse_docx_core_properties` uses `xml.etree.ElementTree.fromstring`
+      on untrusted input. Python's stdlib ET does NOT resolve external
+      entities (XXE-safe since 3.7.1), but is still theoretically
+      susceptible to inline entity-expansion ("billion laughs") on
+      pathological input. Concretely mitigated here by (a) the 50 MB
+      MAX_UPLOAD_MB cap bounding the compressed payload size, (b) the
+      local single-user threat model (no multi-tenant exposure), and
+      (c) the fact that core.xml is a tiny, well-structured property
+      file. Not a realistic attack vector for v1.
+    suggested_action: >
+      Document the decision in a future security hardening epic. If the
+      tool ever goes multi-tenant or internet-exposed, swap
+      `xml.etree.ElementTree.fromstring` for `defusedxml.ElementTree`
+      (drop-in replacement) and add a billion-laughs test. Non-blocking
+      for v1 local-only posture.
+
+  - id: "SEC-002"
+    severity: low
+    file: "backend/docling_service.py:154-157"
+    finding: >
+      `zipfile.ZipFile(io.BytesIO(data))` followed by
+      `zf.open("docProps/core.xml").read()` expands the compressed entry
+      into memory unbounded. A pathological DOCX could ship a highly
+      compressible core.xml (e.g. 1 MB compressed → 1 GB decompressed)
+      and cause a memory-pressure DoS. Bounded by MAX_UPLOAD_MB on the
+      compressed input; still a theoretical concern for any DOCX with a
+      core.xml ratio >> 1000:1.
+    suggested_action: >
+      Optional: call `zf.getinfo(_DOCX_CORE_XML_PATH).file_size` first
+      and skip metadata extraction if > ~1 MB (no legitimate core.xml is
+      that large). Non-blocking for v1 — the local-only posture and
+      upload cap make this an accepted residual risk.
+
+  - id: "OBS-001"
+    severity: low
+    file: "backend/docling_service.py:531-600"
+    finding: >
+      Extension-first routing for `.docx` uploads means that a user who
+      renames a valid PDF to ``report.docx`` gets an AC3a-compliant 400
+      ("Uploaded file is not a valid .docx (missing ZIP magic bytes)")
+      rather than a silent success. This is the explicit story behaviour
+      and matches AC3a, but reviewers trained on Story 1.2's behaviour
+      (content-first magic-byte routing) may be surprised. The inline
+      comment at lines 541–544 calls this out clearly.
+    suggested_action: >
+      No action. The comment is sufficient. Flagging only so the
+      behaviour is explicit in the gate record for future reference.
+
+  - id: "TEST-001"
+    severity: low
+    file: "tests/test_endpoints.py:694-702"
+    finding: >
+      `test_extract_upload_invalid_docx_returns_422` builds a one-entry
+      ZIP via `zipfile.writestr("dummy.txt", ...)` because an empty ZIP
+      archive writes only the EOCD signature (``PK\x05\x06``), not the
+      Local File Header signature (``PK\x03\x04``) the magic-byte check
+      sniffs for. This nuance is documented in the test comment — good
+      — but is a small iceberg for future contributors writing similar
+      fixtures.
+    suggested_action: >
+      None. The comment in the test is clear. Noted for future fixture
+      authoring reference.
+
+acceptance_criteria:
+  AC1_sourcekind_expansion:
+    status: met
+    evidence: >
+      `backend/models.py::SourceKind` now contains the six literals.
+      Implicitly verified by every new DOCX test asserting
+      `result.source.kind == "docx_upload"` or `"docx_local_path"` —
+      these assertions only pass if the literal admits the new values.
+
+  AC2_dispatch_in_extract:
+    status: met
+    evidence: >
+      file-like branch: `test_extract_docx_upload_success` asserts
+      kind=`docx_upload`, non-empty markdown, and `partial=False /
+      failed_pages=() / total_pages=None` (no chunking for DOCX).
+      Path branch: `test_extract_local_docx_success` mirrors the same
+      assertions with kind=`docx_local_path` and
+      `Path(result.source.location).name == "sample.docx"`. Both paths
+      build `DocumentStream(name=..., stream=io.BytesIO(data))` single-
+      call as the AC specifies; chunker is not invoked (private helper
+      `_convert_docx_bytes` has no chunking branch).
+
+  AC3_magic_byte_validation:
+    status: met
+    evidence: >
+      AC3a (unit): `test_extract_docx_extension_without_zip_magic_raises_invalid_input`
+      feeds PDF bytes under a `.docx` filename and asserts
+      `InvalidInputError` with "docx" + "zip" in the message.
+      AC3a (integration): `test_extract_upload_docx_with_pdf_magic_returns_400`
+      asserts HTTP 400 with `INVALID_INPUT` and message contains "docx"
+      + "zip". AC3b (deferred to Docling):
+      `test_extract_upload_invalid_docx_returns_422` feeds a valid ZIP
+      that is not an OOXML package; `_run_docling` stub raises
+      `ConversionError`, endpoint returns 422 `CONVERSION_FAILED`.
+      `DOCX_MAGIC` is exported as a sibling constant to `PDF_MAGIC` and
+      both coexist cleanly in the PDF path (unchanged).
+
+  AC4_endpoint_accepts_docx:
+    status: met
+    evidence: >
+      (a) `test_extract_upload_docx_success` posts a `.docx` via the
+      existing `file` form field → 200 OK. (b) `_validate_local_path`
+      in `backend/main.py` now accepts `.pdf` and `.docx` with
+      suffix-switched magic-byte checks; integration coverage via
+      `test_extract_local_path_docx_success`. Oversized upload path
+      (AC4c — reuse MAX_UPLOAD_MB) is unchanged and still covered by
+      `test_extract_oversized_upload_maps_to_413` (PDF path; the
+      branch is kind-agnostic). (d) URL-DOCX intentionally out of
+      scope; existing `_detect_url_kind` unchanged.
+
+  AC5_docx_metadata_to_frontmatter:
+    status: met
+    evidence: >
+      Unit: `test_build_docx_emits_all_core_properties` (all three
+      keys present) + `test_build_docx_omits_optional_keys_when_absent`
+      (FR4 omission rule preserved). Integration:
+      `test_extract_upload_docx_writes_core_properties_into_frontmatter`
+      reads the written `.md` and asserts `source_title`, `author`,
+      `year` are emitted when core.xml supplies them. The fixture
+      `tests/fixtures/sample.docx` contains `dc:title="Docling DOCX
+      Fixture"`, `dc:creator="Test Author"`, and
+      `dcterms:created="2024-06-15T12:00:00Z"` (year=2024), so the
+      emitted YAML round-trips cleanly.
+
+  AC6_filename_slug_for_docx:
+    status: met
+    evidence: >
+      `backend/file_writer.py` was already extension-agnostic via
+      `Path(source.original_filename).stem` + `EXTENSION=".md"`
+      (Story 1.3). Change was a frozenset rename/expansion
+      (`PDF_SOURCE_KINDS` → `FILE_SOURCE_KINDS` including both DOCX
+      kinds). `test_extract_upload_docx_success` asserts
+      `output_path.suffix == ".md"` AND `".docx" not in output_path.name`
+      — confirms `briefing.docx` → `briefing.md`, never
+      `briefing.docx.md`. Collision suffix logic (`-2`, `-3`) is
+      shared and unchanged.
+
+  AC7_ui_dropzone_and_placeholder:
+    status: met
+    evidence: >
+      `frontend/templates/index.html` updates: `accept` attribute
+      expanded to include `.docx` and the OOXML MIME type; label "PDF
+      Payload" → "Document Payload"; hint "Single Document Buffer / 50
+      MB MAX" → "PDF or DOCX / 50 MB MAX"; dropzone copy "Drag & drop
+      PDF here..." → "Drag & drop PDF or DOCX here..."; path-input
+      placeholder now reads `C:\Users\you\Documents\paper.pdf (or
+      .docx)`; aria-label updated for screen readers. IDs preserved
+      (`pdf-file-input`, `pdf-dropzone`) per AC7a to avoid churn in
+      `app.js` / CSS. No `style.css` / `app.js` changes needed —
+      confirmed by grep. User-confirmed manual smoke test:
+      **100% functional in browser** (2026-04-24).
+
+  AC8_automated_tests:
+    status: met
+    evidence: >
+      (a) Fixture: `tests/fixtures/sample.docx` committed, 1.48 KB
+      (under 20 KB cap). Generator `generate_sample_docx.py` is
+      stdlib-only (no `python-docx` dev-dep added). (b) 3 new unit
+      tests in `test_docling_service.py`. (c) 2 new unit tests in
+      `test_frontmatter.py`. (d) 5 new integration tests in
+      `test_endpoints.py` (3 success + 2 error — exceeds the minimum
+      "3 success + 2 error" demanded by AC8d). (e) Regression: 97
+      pre-existing tests (Stories 1.1–1.7) still pass unchanged.
+      Total suite 107/107 green.
+
+  AC9_readme_and_env_example:
+    status: met
+    evidence: >
+      README: headline/tagline mentions DOCX; "Como usar" enumerates
+      six modalities (URL HTML, URL PDF, upload PDF, upload DOCX,
+      local_path PDF, local_path DOCX); "Limitações conhecidas"
+      expanded with `.doc`/`.odt`/`.rtf` and DOCX-URL-out-of-scope
+      bullets; troubleshooting gained a `.docm` entry plus
+      generalisation of the `local_path` bullet to `.pdf` or `.docx`;
+      project-tree fixture list includes `sample.docx`.
+      `.env.example` intentionally unchanged (no new variables —
+      MAX_UPLOAD_MB reused, no chunker knobs for DOCX).
+
+  AC10_lint_and_performance:
+    status: met
+    evidence: >
+      `ruff check backend tests` → All checks passed. `ruff format
+      --check backend tests` → 18 files already formatted.
+      `pytest -q` → 107 passed in 9.88 s (warm run) / 19.56 s (first
+      run in session). Well under the 60 s Story 1.6 AC5 budget.
+      DocumentConverter singleton (lifespan R2) handles DOCX format
+      dynamically; no new format_options registered.
+
+risk_profile:
+  before_review: low
+  after_review: low
+  residual:
+    - risk: "Billion-laughs attack on core.xml via xml.etree.ElementTree"
+      probability: very low
+      impact: medium
+      mitigation: >
+        SEC-001. Local single-user posture, MAX_UPLOAD_MB cap, and
+        core.xml's trivially-small real-world size make this a
+        theoretical concern. Defusedxml swap-in is a one-line future
+        hardening.
+    - risk: "Zip-bomb targeting core.xml entry decompression"
+      probability: very low
+      impact: medium
+      mitigation: >
+        SEC-002. MAX_UPLOAD_MB (50 MB) bounds the compressed input; the
+        optional `file_size` pre-check is a cheap future mitigation.
+    - risk: "Docling DOCX backend rejects edge-case .docx (old
+      LibreOffice, Pages, Google Docs exports)"
+      probability: low
+      impact: low
+      mitigation: >
+        Already mitigated per story Risk section: surfaces cleanly as
+        HTTP 422 `CONVERSION_FAILED` via the existing error catalog.
+        README `.docm` troubleshooting entry sets expectation for the
+        most common edge case.
+    - risk: "Silent regression on PDF-renamed-to-.docx behaviour if
+      extension-first routing is refactored to content-first"
+      probability: low
+      impact: medium
+      mitigation: >
+        OBS-001. Inline comment at `docling_service.py:541-544`
+        documents the intent. `test_extract_upload_docx_with_pdf_magic_returns_400`
+        is the regression guard — a content-first refactor would flip
+        this test from 400 to 200.
+
+nfr_assessment:
+  performance:
+    status: met
+    evidence: >
+      Suite runtime 9.88 s warm (lint + 107 tests) — DOCX single-call
+      adds no chunker overhead; _run_docling is mocked in unit/
+      integration, and DocumentConverter singleton (Story 1.4 R2)
+      absorbs format-option registration dynamically. User-reported
+      manual smoke test: 100% functional (latency not a concern for
+      DOCX at single-user scale).
+  security:
+    status: met-with-advisories
+    evidence: >
+      No new attack surface beyond trusted-input XML + ZIP parsing
+      (SEC-001, SEC-002) — both bounded by upload cap and local-only
+      threat model. No new secrets, no new endpoints, no new
+      authentication surface. Magic-byte checks prevent trivial
+      content-type bypass (AC3). Error messages do not leak server
+      paths (only the user-supplied filename).
+  reliability:
+    status: met
+    evidence: >
+      DOCX path does not touch the pypdfium2 heap (Story 1.7's
+      concern). `_parse_docx_core_properties` is exception-safe on
+      missing/malformed core.xml (returns `{}` on KeyError/
+      BadZipFile/ParseError — never raises). `_guard_non_empty_markdown`
+      gets an explicit DOCX branch so silent-empty-body bug cannot
+      recur for DOCX.
+  maintainability:
+    status: met
+    evidence: >
+      Clear extension-first routing with inline rationale. Metadata
+      parser is self-contained, stdlib-only, and documented. Frozenset
+      rename (`PDF_SOURCE_KINDS` → `FILE_SOURCE_KINDS`) correctly
+      generalises the concept without breaking callers (single call
+      site, confirmed by grep). Fixture generator lives alongside
+      `generate_large_pdf.py` — consistent precedent.
+
+recommendations:
+  must_fix: []
+  should_consider:
+    - >
+      SEC-001: register a tech-debt item to adopt `defusedxml` if the
+      tool ever leaves the local-only posture. One-line drop-in.
+    - >
+      SEC-002: consider adding a file_size guard on the core.xml ZIP
+      entry (bail out if compressed ratio > ~1000:1). Tiny code, nice
+      defence-in-depth for the v1.x posture.
+  nice_to_have:
+    - >
+      Add a smoke test against a real DOCX produced by Google Docs /
+      Pages export to catch metadata-encoding quirks before users
+      report them. Non-blocking.
+
+coderabbit_review:
+  status: not_executed
+  reason: >
+    WSL is not installed in this dev environment and
+    `coderabbit_integration.enabled` is not set in `core-config.yaml`.
+    Manual review performed per the story CodeRabbit section directive
+    ("Caso contrário, validação manual").
+
+next_steps:
+  - Story 1.8 status: "Ready for Review" → "Done" after @devops push.
+  - @dev (Dex) is clear — no rework required. No must-fix items.
+  - Gate ready to hand off to @devops (`@devops *push`).

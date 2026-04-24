@@ -259,6 +259,85 @@ async def test_extract_pdf_upload_without_magic_raises_invalid_input(
             await extract(upload, http_client=client, converter=dummy_converter)
 
 
+# ---- Story 1.8 — DOCX dispatch (AC2, AC3) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_docx_upload_success(
+    make_test_http_client, fixtures_dir: Path, dummy_converter, monkeypatch
+):
+    """AC2 (a) — file-like DOCX routes through the DOCX dispatch branch."""
+
+    _patch_run_docling(
+        monkeypatch,
+        markdown="# DOCX body\n\nFirst paragraph.\n",
+        metadata={},
+    )
+
+    docx_bytes = (fixtures_dir / "sample.docx").read_bytes()
+    upload = io.BytesIO(docx_bytes)
+    upload.name = "my-briefing.docx"  # type: ignore[attr-defined]
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        result = await extract(upload, http_client=client, converter=dummy_converter)
+
+    assert isinstance(result, ExtractionResult)
+    assert result.source.kind == "docx_upload"
+    assert result.source.original_filename == "my-briefing.docx"
+    assert result.markdown.strip()
+    # Core properties from the fixture override any Docling stream-name hint.
+    assert result.metadata.source_title == "Docling DOCX Fixture"
+    assert result.metadata.author == "Test Author"
+    assert result.metadata.year == 2024
+    # DOCX never runs through the chunker — Story 1.7 fields stay clean.
+    assert result.partial is False
+    assert result.failed_pages == ()
+    assert result.total_pages is None
+
+
+@pytest.mark.asyncio
+async def test_extract_local_docx_success(
+    make_test_http_client, fixtures_dir: Path, dummy_converter, monkeypatch
+):
+    """AC2 (b) — Path DOCX routes through the DOCX dispatch branch."""
+
+    _patch_run_docling(
+        monkeypatch,
+        markdown="# Local DOCX\n\nBody.\n",
+        metadata={},
+    )
+
+    docx_path = fixtures_dir / "sample.docx"
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        result = await extract(docx_path, http_client=client, converter=dummy_converter)
+
+    assert result.source.kind == "docx_local_path"
+    assert result.source.original_filename == "sample.docx"
+    assert Path(result.source.location).name == "sample.docx"
+    assert result.metadata.source_title == "Docling DOCX Fixture"
+    assert result.metadata.author == "Test Author"
+    assert result.metadata.year == 2024
+
+
+@pytest.mark.asyncio
+async def test_extract_docx_extension_without_zip_magic_raises_invalid_input(
+    make_test_http_client, dummy_converter
+):
+    """AC3 (a) — ``.docx`` filename + non-ZIP bytes → ``InvalidInputError``."""
+
+    # Deliberate mismatch: PDF magic bytes but the caller claims ``.docx``.
+    upload = io.BytesIO(b"%PDF-1.4\n% not really a docx, renamed on disk\n")
+    upload.name = "pretend.docx"  # type: ignore[attr-defined]
+
+    async with make_test_http_client(lambda r: httpx.Response(500)) as client:
+        with pytest.raises(InvalidInputError) as excinfo:
+            await extract(upload, http_client=client, converter=dummy_converter)
+
+    assert "docx" in str(excinfo.value).lower()
+    assert "zip" in str(excinfo.value).lower()
+
+
 # ---- Advisory AC5 check (from @po review) ---------------------------------
 
 

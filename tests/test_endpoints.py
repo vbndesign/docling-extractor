@@ -566,6 +566,147 @@ def test_extract_pdf_exceeds_failure_threshold_returns_422(
     assert "over threshold" in body["message"]
 
 
+# --------------------------------------------------------------------------- #
+# STORY 1.8 — DOCX input support (AC4, AC5, AC8)
+# --------------------------------------------------------------------------- #
+
+
+def test_extract_upload_docx_success(test_client, fixtures_dir, test_settings, set_run_docling):
+    """AC4a, AC8d — upload of a ``.docx`` via the existing ``file`` form field."""
+
+    set_run_docling(lambda source, *, converter: ("# DOCX body\n\nFirst paragraph.\n", {}, []))  # noqa: ARG005
+    docx_bytes = (fixtures_dir / "sample.docx").read_bytes()
+
+    files = {
+        "file": (
+            "sample.docx",
+            docx_bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    }
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "ok"
+    output_path = Path(body["output_path"])
+    assert output_path.is_file()
+    assert output_path.parent == test_settings.output_dir.resolve()
+    # AC6 — .docx → .md, never .docx.md
+    assert output_path.suffix == ".md"
+    assert ".docx" not in output_path.name
+    _assert_file_has_frontmatter_and_body(output_path)
+
+
+def test_extract_local_path_docx_success(test_client, fixtures_dir, test_settings, set_run_docling):
+    """AC4b — ``local_path`` accepts ``.docx`` with ZIP magic bytes."""
+
+    set_run_docling(lambda source, *, converter: ("# Local DOCX\n\nBody.\n", {}, []))  # noqa: ARG005
+
+    docx_path = fixtures_dir / "sample.docx"
+    response = test_client.post("/extract", data={"local_path": str(docx_path.resolve())})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    output_path = Path(body["output_path"])
+    assert output_path.is_file()
+    assert output_path.parent == test_settings.output_dir.resolve()
+    assert output_path.suffix == ".md"
+    _assert_file_has_frontmatter_and_body(output_path)
+
+
+def test_extract_upload_docx_writes_core_properties_into_frontmatter(
+    test_client, fixtures_dir, set_run_docling
+):
+    """AC5 — ``dc:title``, ``dc:creator``, ``dcterms:created`` land in YAML.
+
+    The ``_run_docling`` stub ignores the input stream; the metadata
+    assertion relies entirely on ``_parse_docx_core_properties`` reading
+    the real fixture bytes attached to the request.
+    """
+
+    set_run_docling(lambda source, *, converter: ("# Body\n\nPara.\n", {}, []))  # noqa: ARG005
+    docx_bytes = (fixtures_dir / "sample.docx").read_bytes()
+
+    files = {
+        "file": (
+            "sample.docx",
+            docx_bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    }
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 200, response.text
+    output_path = Path(response.json()["output_path"])
+    text = output_path.read_text(encoding="utf-8")
+    frontmatter = text.split("---", 2)[1]
+    assert "source_title: Docling DOCX Fixture" in frontmatter
+    assert "author: Test Author" in frontmatter
+    assert "year: 2024" in frontmatter
+
+
+def test_extract_upload_docx_with_pdf_magic_returns_400(test_client):
+    """AC3 (a) — ``.docx`` filename + non-ZIP magic bytes → 400 INVALID_INPUT."""
+
+    # %PDF- header inside a file the caller claims is a DOCX; story AC3a.
+    payload = b"%PDF-1.4\n% not really a docx, renamed on disk\n"
+    files = {
+        "file": (
+            "pretend.docx",
+            payload,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    }
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["code"] == "INVALID_INPUT"
+    assert "docx" in body["message"].lower()
+    assert "zip" in body["message"].lower()
+
+
+def test_extract_upload_invalid_docx_returns_422(test_client, set_run_docling):
+    """AC3 (b) — valid ZIP but not an OOXML Word package → Docling raises 422.
+
+    We stub ``_run_docling`` to raise ``ConversionError``, mirroring what
+    happens in production when the user uploads a ``.xlsx`` / ``.pptx``
+    disguised as ``.docx`` (AC3b: deferred to Docling, surfaces as
+    ``CONVERSION_FAILED``).
+    """
+
+    from backend.errors import ConversionError
+
+    def _boom(source, *, converter):  # noqa: ARG001
+        raise ConversionError("Docling rejected non-Word OOXML package")
+
+    set_run_docling(_boom)
+
+    # Minimal ZIP with at least one entry — an empty ZIP uses the EOCD
+    # signature ``PK\x05\x06`` rather than the Local File Header ``PK\x03\x04``
+    # the magic-byte check requires. A one-entry ZIP exercises the branch
+    # where the upload passes the magic check but Docling refuses the
+    # package (AC3b — wrong OOXML flavour surfaces as CONVERSION_FAILED).
+    import io as _io
+    import zipfile as _zipfile
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("dummy.txt", "not an OOXML package")
+    files = {
+        "file": (
+            "fake.docx",
+            buf.getvalue(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    }
+    response = test_client.post("/extract", files=files)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "CONVERSION_FAILED"
+
+
 def test_extract_success_emits_partial_false_in_json_response(test_client, sample_pdf_bytes):
     """AC5 / API contract — JSON envelope ALWAYS includes partial/failed_pages.
 

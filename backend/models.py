@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-SourceKind = Literal["url_html", "url_pdf", "pdf_upload", "pdf_local_path"]
+SourceKind = Literal[
+    "url_html", "url_pdf", "pdf_upload", "pdf_local_path", "docx_upload", "docx_local_path"
+]
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,8 @@ class SourceDescriptor:
 
     `location` is the URL for remote sources, the absolute path for local
     files, or the original filename for uploads. `original_filename` is only
-    populated for `pdf_upload` and `pdf_local_path`.
+    populated for file sources (`pdf_upload`, `pdf_local_path`,
+    `docx_upload`, `docx_local_path`).
     """
 
     kind: SourceKind
