@@ -15,7 +15,7 @@ import yaml
 from backend.frontmatter import build
 from backend.models import ExtractedMetadata, SourceDescriptor
 
-REQUIRED_KEYS = {"note_type", "created", "extracted_at", "location", "generated_by"}
+REQUIRED_KEYS = {"note_type", "created", "location", "created_by"}
 FORBIDDEN_KEYS = {"title", "source_type", "domain", "concepts_extracted"}
 
 
@@ -45,7 +45,7 @@ def test_build_all_required_fields_present(fixed_now, html_source) -> None:
 
     assert REQUIRED_KEYS.issubset(parsed.keys())
     assert parsed["note_type"] == "literature_document"
-    assert parsed["generated_by"] == "docling"
+    assert parsed["created_by"] == "docling"
     assert parsed["location"] == "https://example.com/article"
 
 
@@ -62,7 +62,7 @@ def test_build_all_optional_fields_present(fixed_now, html_source) -> None:
 
     assert parsed["source_title"] == "Example Article Title"
     assert parsed["author"] == "Jane Doe"
-    assert parsed["year"] == 2024
+    assert parsed["published"] == 2024
 
 
 def test_build_mixed_optional_fields(fixed_now, html_source) -> None:
@@ -73,7 +73,7 @@ def test_build_mixed_optional_fields(fixed_now, html_source) -> None:
     parsed = yaml.safe_load(_strip_delimiters(rendered))
 
     assert parsed["source_title"] == "Only Title"
-    assert parsed["year"] == 2023
+    assert parsed["published"] == 2023
     assert "author" not in parsed
 
 
@@ -84,7 +84,7 @@ def test_build_omits_missing_fields(fixed_now, html_source) -> None:
 
     assert "source_title" not in rendered
     assert "author" not in rendered
-    assert "year" not in rendered
+    assert "published" not in rendered
     assert "null" not in rendered.lower()
 
 
@@ -119,24 +119,16 @@ def test_build_escapes_special_chars(fixed_now) -> None:
     assert parsed["location"] == r"C:\Users\vbnde\Docs\some: file.pdf"
 
 
-def test_build_uses_local_date_for_created_and_iso8601_for_extracted_at(
-    fixed_now, html_source
-) -> None:
-    """AC2 — `created` is YYYY-MM-DD; `extracted_at` is ISO 8601 with tz offset."""
+def test_build_uses_local_date_for_created_and_no_extracted_at(fixed_now, html_source) -> None:
+    """`created` is YYYY-MM-DD; `extracted_at` was retired (vault Template 2, 19/09/2026)."""
 
     rendered = build(ExtractedMetadata(), html_source, fixed_now)
     parsed = yaml.safe_load(_strip_delimiters(rendered))
 
     assert parsed["created"] == "2026-04-18"
-    # `extracted_at` is emitted as a string (datetime.isoformat()) so PyYAML
-    # leaves it quoted; round-trip via fromisoformat to assert it parses back
-    # to a tz-aware value identical to `fixed_now`.
-    extracted_at_str = parsed["extracted_at"]
-    assert isinstance(extracted_at_str, str)
-    assert extracted_at_str == fixed_now.isoformat()
-    parsed_dt = datetime.fromisoformat(extracted_at_str)
-    assert parsed_dt == fixed_now
-    assert parsed_dt.tzinfo is not None
+    assert "extracted_at" not in parsed
+    assert "generated_by" not in parsed
+    assert list(parsed.keys())[-1] == "created_by"
 
 
 def test_build_wraps_in_triple_dashes(fixed_now, html_source) -> None:
@@ -154,7 +146,7 @@ def test_build_wraps_in_triple_dashes(fixed_now, html_source) -> None:
 
 
 def test_build_emits_partial_and_failed_pages_when_partial_true(fixed_now, html_source) -> None:
-    """AC4 — `partial: true` + ordered `failed_pages` appear after `generated_by`."""
+    """AC4 — `partial: true` + ordered `failed_pages` appear after `created_by`."""
 
     rendered = build(
         ExtractedMetadata(),
@@ -168,9 +160,9 @@ def test_build_emits_partial_and_failed_pages_when_partial_true(fixed_now, html_
     assert parsed["failed_pages"] == [13, 14, 45]
 
     # Key order matters for human-readability: integrity info MUST come right
-    # after `generated_by` (arch §5.2) and BEFORE optional metadata.
+    # after `created_by` (arch §5.2) and BEFORE optional metadata.
     keys = list(parsed.keys())
-    assert keys.index("partial") == keys.index("generated_by") + 1
+    assert keys.index("partial") == keys.index("created_by") + 1
     assert keys.index("failed_pages") == keys.index("partial") + 1
 
 
@@ -213,7 +205,7 @@ def test_build_docx_emits_all_core_properties(fixed_now, docx_source) -> None:
 
     assert parsed["source_title"] == "Docling DOCX Fixture"
     assert parsed["author"] == "Test Author"
-    assert parsed["year"] == 2024
+    assert parsed["published"] == 2024
 
 
 def test_build_docx_omits_optional_keys_when_absent(fixed_now, docx_source) -> None:
@@ -227,7 +219,7 @@ def test_build_docx_omits_optional_keys_when_absent(fixed_now, docx_source) -> N
 
     assert "source_title" not in rendered
     assert "author" not in rendered
-    assert "year" not in rendered
+    assert "published" not in rendered
     # Required keys still present
     parsed = yaml.safe_load(_strip_delimiters(rendered))
     assert REQUIRED_KEYS.issubset(parsed.keys())

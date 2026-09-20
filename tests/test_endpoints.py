@@ -40,7 +40,7 @@ def _assert_file_has_frontmatter_and_body(path: Path) -> None:
     assert text.startswith("---\n"), text[:40]
     _, frontmatter, body = text.split("---", 2)
     assert "note_type: literature_document" in frontmatter
-    assert "generated_by: docling" in frontmatter
+    assert "created_by: docling" in frontmatter
     assert body.strip(), "body must be non-empty"
 
 
@@ -327,10 +327,10 @@ def test_extract_upload_pdf_writes_valid_frontmatter(test_client, sample_pdf_byt
     output_path = Path(response.json()["output_path"])
     text = output_path.read_text(encoding="utf-8")
     assert "note_type: literature_document" in text
-    assert "extracted_at:" in text
+    assert "created_by:" in text
     assert "created:" in text
     assert "location:" in text
-    assert "generated_by: docling" in text
+    assert "created_by: docling" in text
 
 
 @pytest.mark.parametrize("bad_value", ["", "   "])
@@ -643,7 +643,7 @@ def test_extract_upload_docx_writes_core_properties_into_frontmatter(
     frontmatter = text.split("---", 2)[1]
     assert "source_title: Docling DOCX Fixture" in frontmatter
     assert "author: Test Author" in frontmatter
-    assert "year: 2024" in frontmatter
+    assert "published: 2024" in frontmatter
 
 
 def test_extract_upload_docx_with_pdf_magic_returns_400(test_client):
